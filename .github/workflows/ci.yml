@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ccmux-telegram
+        uses: actions/checkout@v4
+        with:
+          path: ccmux-telegram
+
+      # ccmux-telegram pyproject points [tool.uv.sources] ccmux at
+      # ../ccmux-backend, so we need the backend repo checked out as a
+      # sibling for the editable install to resolve.
+      - name: Checkout ccmux-backend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/ccmux-backend
+          path: ccmux-backend
+          ref: main
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        working-directory: ccmux-telegram
+        run: uv sync --all-extras
+
+      - name: Ruff check
+        working-directory: ccmux-telegram
+        run: uv run ruff check src/ tests/
+
+      - name: Ruff format check
+        working-directory: ccmux-telegram
+        run: uv run ruff format --check src/ tests/
+
+      - name: Pyright
+        working-directory: ccmux-telegram
+        run: uv run pyright src/
+
+      - name: Pytest
+        working-directory: ccmux-telegram
+        run: uv run pytest -v --cov=ccmux_telegram --cov-report=term-missing
