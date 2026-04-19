@@ -193,6 +193,12 @@ async def handle_new_message(msg: ClaudeMessage, bot: Bot) -> None:
     ):
         return
 
+    # Skip thinking blocks when CCMUX_SHOW_THINKING=false. Currently
+    # these blocks have empty content (CC only records a signature),
+    # so suppressing them just removes a placeholder.
+    if not config.show_thinking and msg.content_type == "thinking":
+        return
+
     parts = build_response_parts(
         msg.text,
         msg.is_complete,

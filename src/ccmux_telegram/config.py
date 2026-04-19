@@ -61,6 +61,12 @@ class Config:
         self.show_tool_calls = (
             os.getenv("CCMUX_SHOW_TOOL_CALLS", "true").lower() != "false"
         )
+        # Extended-thinking blocks carry no readable content in current
+        # Claude Code JSONL (the `thinking` field is empty, only a
+        # signature remains). Leaving this on only produces a noisy
+        # "∴ Thinking… (thinking)" placeholder. Default to true for
+        # backward compatibility; set false to suppress.
+        self.show_thinking = os.getenv("CCMUX_SHOW_THINKING", "true").lower() != "false"
         self.show_hidden_dirs = (
             os.getenv("CCMUX_SHOW_HIDDEN_DIRS", "").lower() == "true"
         )

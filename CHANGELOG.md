@@ -30,6 +30,13 @@ First stable release, paired with `ccmux` 1.0.0.
   explicitly (see backend v1.0 notes) instead of relying on the old
   module-level `tmux_registry` import. Tests updated accordingly.
 
+### Added
+
+- `CCMUX_SHOW_THINKING` env toggle (default `true`). Set `false` to
+  drop `∴ Thinking…` messages — useful because current Claude Code
+  JSONL records only a signature for extended-thinking blocks, so the
+  rendered message is a content-less placeholder anyway.
+
 ### Dependencies
 
 - `ccmux` pinned to `>=1.0.0,<2.0.0`.

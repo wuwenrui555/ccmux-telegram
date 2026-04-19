@@ -44,6 +44,16 @@ Run the bot:
 ccmux-telegram
 ```
 
+## Display toggles
+
+Environment variables that control how much noise the bot pushes to Telegram. All are read from `~/.ccmux/.env` on startup.
+
+- `CCMUX_SHOW_TOOL_CALLS` (default `true`) — relay `tool_use` / `tool_result` blocks (Read, Edit, Bash, …). Set `false` to keep only assistant text + status line.
+- `CCMUX_SHOW_THINKING` (default `true`) — relay extended-thinking blocks. Note that current Claude Code JSONL stores only a signature for these (the content is omitted upstream), so the bot can only render a `∴ Thinking… (thinking)` placeholder. Set `false` to drop it entirely.
+- `CCMUX_SHOW_HIDDEN_DIRS` (default `false`) — show dotfile-prefixed directories in the cwd picker.
+- `CCMUX_DANGEROUSLY_SKIP_PERMISSIONS` (default `false`) — pass `--dangerously-skip-permissions` to newly spawned Claude sessions.
+- `CCMUX_SHOW_USER_MESSAGES` (default `true`, backend env) — echo your own messages back into the topic. Set `false` if you find the 👤-prefixed echo redundant.
+
 ## Dependency on ccmux
 
 `ccmux_telegram` imports exclusively from `ccmux.api`. Any change to `ccmux.api` is a breaking change for this package — the `ccmux` pin in `pyproject.toml` must be a compatible version range.
