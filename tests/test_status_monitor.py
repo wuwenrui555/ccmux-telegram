@@ -56,14 +56,14 @@ class TestStatusMonitorObserve:
         mock_window = MagicMock()
         mock_window.window_id = window_id
 
-        with patch("ccmux.status_monitor.tmux_registry") as mock_registry:
-            mock_tm = MagicMock()
-            mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
-            mock_tm.capture_pane = AsyncMock(return_value=sample_pane_settings)
-            mock_registry.get_by_window_id.return_value = mock_tm
+        mock_registry = MagicMock()
+        mock_tm = MagicMock()
+        mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
+        mock_tm.capture_pane = AsyncMock(return_value=sample_pane_settings)
+        mock_registry.get_by_window_id.return_value = mock_tm
 
-            monitor = StatusMonitor()
-            status = await monitor._observe(_make_binding(window_id))
+        monitor = StatusMonitor(tmux_registry=mock_registry)
+        status = await monitor._observe(_make_binding(window_id))
 
         assert status.window_exists is True
         assert status.pane_captured is True
@@ -84,14 +84,14 @@ class TestStatusMonitorObserve:
             "  [Opus 4.6] Context: 50%\n"
         )
 
-        with patch("ccmux.status_monitor.tmux_registry") as mock_registry:
-            mock_tm = MagicMock()
-            mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
-            mock_tm.capture_pane = AsyncMock(return_value=normal_pane)
-            mock_registry.get_by_window_id.return_value = mock_tm
+        mock_registry = MagicMock()
+        mock_tm = MagicMock()
+        mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
+        mock_tm.capture_pane = AsyncMock(return_value=normal_pane)
+        mock_registry.get_by_window_id.return_value = mock_tm
 
-            monitor = StatusMonitor()
-            status = await monitor._observe(_make_binding(window_id))
+        monitor = StatusMonitor(tmux_registry=mock_registry)
+        status = await monitor._observe(_make_binding(window_id))
 
         assert status.window_exists is True
         assert status.pane_captured is True
@@ -170,23 +170,24 @@ class TestConsumeStatuses:
 
         topic = _make_binding(window_id)
 
+        mock_registry_poll = MagicMock()
+        mock_tm_poll = MagicMock()
+        mock_tm_poll.find_window_by_id = AsyncMock(return_value=mock_window)
+        mock_tm_poll.capture_pane = AsyncMock(return_value=sample_pane_settings)
+        mock_registry_poll.get_by_window_id.return_value = mock_tm_poll
+
         with (
-            patch("ccmux.status_monitor.tmux_registry") as mock_registry_poll,
             patch("ccmux_telegram.prompt.tmux_registry") as mock_registry_ui,
             patch("ccmux_telegram.prompt.get_topic"),
             patch("ccmux_telegram.runtime.get_topic_by_window_id", return_value=topic),
         ):
-            mock_tm_poll = MagicMock()
-            mock_tm_poll.find_window_by_id = AsyncMock(return_value=mock_window)
-            mock_tm_poll.capture_pane = AsyncMock(return_value=sample_pane_settings)
-            mock_registry_poll.get_by_window_id.return_value = mock_tm_poll
             mock_tm_ui = MagicMock()
             mock_tm_ui.find_window_by_id = AsyncMock(return_value=mock_window)
             mock_tm_ui.capture_pane = AsyncMock(return_value=sample_pane_settings)
             mock_tm_ui.send_keys = AsyncMock(return_value=True)
             mock_registry_ui.get_by_window_id.return_value = mock_tm_ui
 
-            monitor = StatusMonitor()
+            monitor = StatusMonitor(tmux_registry=mock_registry_poll)
             status = await monitor._observe(_make_binding(window_id))
             await consume_statuses(mock_bot, [status])
 

@@ -1,10 +1,6 @@
 """Tests for response_builder.build_response_parts."""
 
 from ccmux_telegram.message_in import build_response_parts
-from ccmux.claude_transcript_parser import TranscriptParser
-
-EXP_START = TranscriptParser.EXPANDABLE_QUOTE_START
-EXP_END = TranscriptParser.EXPANDABLE_QUOTE_END
 
 
 class TestBuildResponseParts:
@@ -22,9 +18,10 @@ class TestBuildResponseParts:
         assert len(short_parts[0]) < len(parts[0])
 
     def test_thinking_content_truncated_at_500_chars(self):
-        inner = "x" * 800
-        text = f"{EXP_START}{inner}{EXP_END}"
-        parts = build_response_parts(text, is_complete=True, content_type="thinking")
+        inner_lines = "\n".join(f"> {'x' * 100}" for _ in range(10))  # ~1000 chars
+        parts = build_response_parts(
+            inner_lines, is_complete=True, content_type="thinking"
+        )
         assert len(parts) == 1
         assert "truncated" in parts[0].lower()
 
@@ -38,9 +35,10 @@ class TestBuildResponseParts:
         assert len(parts) > 1
         assert "1/" in parts[0]
 
-    def test_expandable_quote_stays_atomic(self):
-        inner = "thought " * 100
-        text = f"{EXP_START}{inner}{EXP_END}"
+    def test_blockquote_stays_atomic(self):
+        """A standalone `>` blockquote region is kept as a single part
+        so the markdown layer can render it as one expandable quote."""
+        text = "\n".join(f"> thought line {i}" for i in range(50))
         parts = build_response_parts(text, is_complete=False, content_type="thinking")
         assert len(parts) == 1
 

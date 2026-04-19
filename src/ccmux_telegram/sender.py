@@ -24,20 +24,9 @@ from typing import Any
 from telegram import Bot, InputMediaPhoto, LinkPreviewOptions, Message
 from telegram.error import RetryAfter
 
-from ccmux.api import TranscriptParser
 from .markdown import convert_markdown
 
 logger = logging.getLogger(__name__)
-
-
-def strip_sentinels(text: str) -> str:
-    """Strip expandable quote sentinel markers for plain text fallback."""
-    for s in (
-        TranscriptParser.EXPANDABLE_QUOTE_START,
-        TranscriptParser.EXPANDABLE_QUOTE_END,
-    ):
-        text = text.replace(s, "")
-    return text
 
 
 def _ensure_formatted(text: str) -> str:
@@ -75,9 +64,7 @@ async def send_with_fallback(
         raise
     except Exception:
         try:
-            return await bot.send_message(
-                chat_id=chat_id, text=strip_sentinels(text), **kwargs
-            )
+            return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
         except RetryAfter:
             raise
         except Exception as e:
@@ -140,7 +127,7 @@ async def safe_reply(message: Message, text: str, **kwargs: Any) -> Message:
         raise
     except Exception:
         try:
-            return await message.reply_text(strip_sentinels(text), **kwargs)
+            return await message.reply_text(text, **kwargs)
         except RetryAfter:
             raise
         except Exception as e:
@@ -161,7 +148,7 @@ async def safe_edit(target: Any, text: str, **kwargs: Any) -> None:
         raise
     except Exception:
         try:
-            await target.edit_message_text(strip_sentinels(text), **kwargs)
+            await target.edit_message_text(text, **kwargs)
         except RetryAfter:
             raise
         except Exception as e:
@@ -190,9 +177,7 @@ async def safe_send(
         raise
     except Exception:
         try:
-            await bot.send_message(
-                chat_id=chat_id, text=strip_sentinels(text), **kwargs
-            )
+            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
         except RetryAfter:
             raise
         except Exception as e:

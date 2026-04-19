@@ -15,7 +15,6 @@ from telegram.ext import ContextTypes
 
 from .runtime import get_topic, windows as _windows
 from .topic_bindings import TopicBinding
-from ccmux.api import TranscriptParser
 from .util import authorized, get_thread_id
 from .callback_data import CB_HISTORY_NEXT, CB_HISTORY_PREV
 from .sender import safe_edit, safe_reply, safe_send, split_message
@@ -87,9 +86,6 @@ async def send_history(
             text = f"📋 [{display_name}] No messages yet."
         keyboard = None
     else:
-        _start = TranscriptParser.EXPANDABLE_QUOTE_START
-        _end = TranscriptParser.EXPANDABLE_QUOTE_END
-
         from ccmux.config import config as backend_config
 
         if not backend_config.show_user_messages:
@@ -141,7 +137,9 @@ async def send_history(
             content_type = msg.get("content_type", "text")
             msg_role = msg.get("role", "assistant")
 
-            msg_text = msg_text.replace(_start, "").replace(_end, "")
+            # History renders in a plain-text list view. The backend's
+            # `> ` blockquote markers are left intact so the quoted lines
+            # remain readable and the history page is easy to scan.
 
             if msg_role == "user":
                 lines.append(f"👤 {msg_text}")

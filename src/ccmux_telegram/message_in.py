@@ -14,9 +14,11 @@ import logging
 
 from telegram import Bot
 
+import re
+
 from .config import config
 from .runtime import get_topic_for_claude_session
-from ccmux.api import ClaudeMessage, TranscriptParser
+from ccmux.api import ClaudeMessage
 from .prompt import clear_interactive_msg, handle_interactive_ui
 from .prompt_state import (
     PROMPT_TOOL_NAMES,
@@ -29,6 +31,35 @@ from .sender import split_message
 from .message_queue import enqueue_content_message, get_message_queue
 
 logger = logging.getLogger(__name__)
+
+# Matches a single Markdown blockquote line: "> content" or bare ">".
+_BLOCKQUOTE_LINE_RE = re.compile(r"^>(?: (.*))?$")
+
+
+def _is_blockquote_only(text: str) -> bool:
+    """True when every non-empty line of `text` is a Markdown blockquote.
+
+    Used to detect parser output that should stay atomic (a single
+    collapsible region in the rendered message).
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return all(_BLOCKQUOTE_LINE_RE.match(line) for line in stripped.split("\n") if line)
+
+
+def _strip_blockquote(text: str) -> str:
+    """Return the inner content of a blockquote-only text region."""
+    lines: list[str] = []
+    for line in text.split("\n"):
+        m = _BLOCKQUOTE_LINE_RE.match(line)
+        lines.append(m.group(1) or "" if m else line)
+    return "\n".join(lines)
+
+
+def _as_blockquote(text: str) -> str:
+    """Re-prefix each line with `> ` so the region renders as a blockquote."""
+    return "\n".join(f"> {line}" if line else ">" for line in text.split("\n"))
 
 
 def build_response_parts(
@@ -54,16 +85,16 @@ def build_response_parts(
             text = text[:3000] + "…"
         return [f"{prefix}{text}"]
 
-    # Truncate thinking content to keep it compact
+    # Truncate thinking content to keep it compact. The backend wraps
+    # thinking in a standard Markdown blockquote (`> ` lines); strip the
+    # prefix to measure the inner length, then re-add it after clipping.
     if content_type == "thinking" and is_complete:
-        start_tag = TranscriptParser.EXPANDABLE_QUOTE_START
-        end_tag = TranscriptParser.EXPANDABLE_QUOTE_END
         max_thinking = 500
-        if start_tag in text and end_tag in text:
-            inner = text[text.index(start_tag) + len(start_tag) : text.index(end_tag)]
+        if _is_blockquote_only(text):
+            inner = _strip_blockquote(text)
             if len(inner) > max_thinking:
                 inner = inner[:max_thinking] + "\n\n… (thinking truncated)"
-            text = start_tag + inner + end_tag
+                text = _as_blockquote(inner)
         elif len(text) > max_thinking:
             text = text[:max_thinking] + "\n\n… (thinking truncated)"
 
@@ -77,10 +108,10 @@ def build_response_parts(
         prefix = ""
         separator = ""
 
-    # If text contains expandable quote sentinels, don't split —
-    # the quote must stay atomic. Truncation is handled by
-    # _render_expandable_quote in markdown_v2.py.
-    if TranscriptParser.EXPANDABLE_QUOTE_START in text:
+    # If the body is a standalone blockquote, keep it atomic — the
+    # markdown layer renders it as a single Telegram expandable quote
+    # and handles its own truncation.
+    if _is_blockquote_only(text):
         if prefix:
             return [f"{prefix}{separator}{text}"]
         return [text]

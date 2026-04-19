@@ -1,9 +1,11 @@
 """Markdown → Telegram MarkdownV2 conversion layer.
 
-Wraps `telegramify_markdown` and adds special handling for expandable
-blockquotes (delimited by sentinel tokens from TranscriptParser).
-Expandable quotes are escaped and formatted as Telegram >…|| syntax
-separately, so the library doesn't mangle them.
+Wraps `telegramify_markdown` and adds special handling for standard
+Markdown blockquotes: any contiguous block of lines starting with `> `
+(emitted by the ccmux backend for tool output, thinking blocks, and
+diffs) is rendered as a Telegram expandable blockquote
+(`**>...||` syntax), so the block collapses in the UI. Non-blockquote
+text is handed to `telegramify_markdown` unchanged.
 
 Key function: convert_markdown(text) → MarkdownV2 string.
 """
@@ -14,8 +16,6 @@ import mistletoe
 from mistletoe.block_token import BlockCode, remove_token
 from telegramify_markdown import _update_block, escape_latex
 from telegramify_markdown.render import TelegramMarkdownRenderer
-
-from ccmux.api import TranscriptParser
 
 _TABLE_SEP_RE = re.compile(r"^[\s|:\-]+$")
 
@@ -101,12 +101,6 @@ def convert_markdown_tables(text: str) -> str:
     return "\n".join(result)
 
 
-_EXPQUOTE_RE = re.compile(
-    re.escape(TranscriptParser.EXPANDABLE_QUOTE_START)
-    + r"([\s\S]*?)"
-    + re.escape(TranscriptParser.EXPANDABLE_QUOTE_END)
-)
-
 # Characters that must be escaped in Telegram MarkdownV2 plain text
 _MDV2_ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
 
@@ -116,37 +110,90 @@ def _escape_mdv2(text: str) -> str:
     return _MDV2_ESCAPE_RE.sub(r"\\\1", text)
 
 
+# Matches a single Markdown blockquote line: "> content" or bare ">" (blank
+# line inside a blockquote). Anchored to line start via MULTILINE.
+_BLOCKQUOTE_LINE_RE = re.compile(r"^>(?: (.*))?$")
+
 # Max rendered chars for a single expandable quote block.
 # Leaves room for surrounding text within Telegram's 4096 char message limit.
 _EXPQUOTE_MAX_RENDERED = 3800
 
 
-def _render_expandable_quote(m: re.Match[str]) -> str:
-    """Render an expandable blockquote block in raw MarkdownV2.
+def _split_blockquote_segments(text: str) -> list[tuple[bool, str]]:
+    """Segment `text` into (is_blockquote, content) pairs.
 
-    Truncates the rendered output to _EXPQUOTE_MAX_RENDERED chars
-    to ensure the final message fits within Telegram's 4096 limit.
+    Walks line by line, tracking fenced code blocks (``` boundaries) so
+    lines starting with `>` inside a code block are not mistaken for
+    blockquotes. Contiguous `^> ` lines outside code form one blockquote
+    segment; everything else is a plain segment.
     """
-    inner = m.group(1)
-    escaped = _escape_mdv2(inner)
-    lines = escaped.split("\n")
-    # Build quoted lines, truncating if needed to stay within budget
+    segments: list[tuple[bool, str]] = []
+    plain_buf: list[str] = []
+    quote_buf: list[str] = []
+    in_code = False
+
+    def flush_plain() -> None:
+        if plain_buf:
+            segments.append((False, "\n".join(plain_buf)))
+            plain_buf.clear()
+
+    def flush_quote() -> None:
+        if quote_buf:
+            segments.append((True, "\n".join(quote_buf)))
+            quote_buf.clear()
+
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            # Code fence toggles; `>` inside is literal.
+            flush_quote()
+            in_code = not in_code
+            plain_buf.append(line)
+            continue
+
+        if not in_code and _BLOCKQUOTE_LINE_RE.match(line):
+            flush_plain()
+            quote_buf.append(line)
+        else:
+            flush_quote()
+            plain_buf.append(line)
+
+    flush_plain()
+    flush_quote()
+    return segments
+
+
+def _render_expandable_quote(block_text: str) -> str:
+    """Render a contiguous blockquote segment as a Telegram expandable
+    blockquote (raw MarkdownV2).
+
+    `block_text` is the original multi-line source — each line starts
+    with `>` or `> `. The leading `> ` is stripped before MarkdownV2
+    escaping, then re-prepended in the rendered output.
+
+    Truncates to `_EXPQUOTE_MAX_RENDERED` chars so the final message
+    fits within Telegram's 4096 limit.
+    """
+    # Strip the leading blockquote marker from each source line.
+    raw_lines: list[str] = []
+    for line in block_text.split("\n"):
+        m = _BLOCKQUOTE_LINE_RE.match(line)
+        raw_lines.append(m.group(1) or "" if m else line)
+
     built: list[str] = []
     total_len = 0
     suffix = "\n>… \\(truncated\\)||"
     budget = _EXPQUOTE_MAX_RENDERED - len(suffix)
     truncated = False
-    for line in lines:
-        # +1 for ">" prefix, +1 for "\n" separator
-        line_cost = 1 + len(line) + 1
+    for raw in raw_lines:
+        escaped = _escape_mdv2(raw)
+        line_cost = 1 + len(escaped) + 1  # ">" + line + "\n"
         if total_len + line_cost > budget:
-            # Try to fit a partial line
-            remaining = budget - total_len - 2  # -2 for ">" and "\n"
+            remaining = budget - total_len - 2
             if remaining > 20:
-                built.append(f">{line[:remaining]}")
+                built.append(f">{escaped[:remaining]}")
             truncated = True
             break
-        built.append(f">{line}")
+        built.append(f">{escaped}")
         total_len += line_cost
     if truncated:
         return "\n".join(built) + suffix
@@ -175,31 +222,30 @@ def _markdownify(text: str) -> str:
 def convert_markdown(text: str) -> str:
     """Convert standard Markdown to Telegram MarkdownV2 format.
 
-    Expandable blockquote sections (marked by sentinel tokens from
-    TranscriptParser) are extracted, escaped, and formatted separately
-    so that telegramify_markdown doesn't mangle the >...|| syntax.
+    Contiguous Markdown blockquote regions (lines starting with `> `)
+    are extracted and rendered as Telegram expandable blockquotes so
+    they collapse in the UI; surrounding text is handed to
+    `telegramify_markdown` unchanged.
     """
     # Convert markdown tables to card-style format before telegramify
     text = convert_markdown_tables(text)
 
-    # Extract expandable quote blocks before telegramify
-    segments: list[tuple[bool, str]] = []  # (is_quote, content)
-    last_end = 0
-    for m in _EXPQUOTE_RE.finditer(text):
-        if m.start() > last_end:
-            segments.append((False, text[last_end : m.start()]))
-        segments.append((True, m.group(0)))
-        last_end = m.end()
-    if last_end < len(text):
-        segments.append((False, text[last_end:]))
-
-    if not segments:
+    segments = _split_blockquote_segments(text)
+    if not any(is_quote for is_quote, _ in segments):
         return _markdownify(text)
 
     parts: list[str] = []
-    for is_quote, segment in segments:
+    for i, (is_quote, segment) in enumerate(segments):
         if is_quote:
-            parts.append(_EXPQUOTE_RE.sub(_render_expandable_quote, segment))
+            rendered = _render_expandable_quote(segment)
+            # Ensure the expandable quote sits on its own line so the
+            # leading ">" is recognized as block syntax by Telegram.
+            if parts and not parts[-1].endswith("\n"):
+                parts.append("\n")
+            parts.append(rendered)
+            # Separator after the quote (unless it's the last segment).
+            if i < len(segments) - 1:
+                parts.append("\n")
         else:
             parts.append(_markdownify(segment))
     return "".join(parts)

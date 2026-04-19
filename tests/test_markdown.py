@@ -3,10 +3,6 @@
 import pytest
 
 from ccmux_telegram.markdown import _escape_mdv2, convert_markdown
-from ccmux.claude_transcript_parser import TranscriptParser
-
-EXP_START = TranscriptParser.EXPANDABLE_QUOTE_START
-EXP_END = TranscriptParser.EXPANDABLE_QUOTE_END
 
 
 class TestEscapeMdv2:
@@ -41,18 +37,42 @@ class TestConvertMarkdown:
         assert "```" in result
         assert "print" in result
 
-    def test_expandable_quote_sentinels(self) -> None:
-        text = f"{EXP_START}quoted content{EXP_END}"
+    def test_blockquote_renders_as_expandable_quote(self) -> None:
+        """A standalone Markdown blockquote from the backend is rendered
+        as a Telegram expandable blockquote (`>…||`)."""
+        text = "> quoted content"
         result = convert_markdown(text)
-        assert EXP_START not in result
-        assert EXP_END not in result
         assert ">quoted content||" in result
 
-    def test_mixed_text_and_expandable_quote(self) -> None:
-        text = f"before {EXP_START}inside quote{EXP_END} after"
+    def test_multiline_blockquote(self) -> None:
+        text = "> line one\n> line two\n> line three"
         result = convert_markdown(text)
-        assert EXP_START not in result
-        assert EXP_END not in result
-        assert ">inside quote||" in result
+        assert ">line one" in result
+        assert ">line two" in result
+        assert ">line three" in result
+        assert result.rstrip().endswith("||")
+
+    def test_mixed_text_and_blockquote(self) -> None:
+        text = "before\n> inside quote\nafter"
+        result = convert_markdown(text)
         assert "before" in result
+        assert ">inside quote||" in result
         assert "after" in result
+
+    def test_code_block_with_gt_inside_is_not_blockquote(self) -> None:
+        """A `>` line inside a fenced code block must not be treated as
+        a Markdown blockquote — otherwise the ccmux backend's Bash
+        output (which may contain shell prompts) would be mangled."""
+        text = "```\n> not a quote\n```"
+        result = convert_markdown(text)
+        # No expandable quote syntax should appear; the line stays
+        # inside the code block.
+        assert "||" not in result
+
+    def test_empty_blockquote_line(self) -> None:
+        """A bare `>` marks an empty line within a blockquote."""
+        text = "> line one\n>\n> line three"
+        result = convert_markdown(text)
+        assert ">line one" in result
+        assert ">line three" in result
+        assert result.rstrip().endswith("||")

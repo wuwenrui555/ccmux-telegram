@@ -22,7 +22,6 @@ from .sender import (
     PARSE_MODE,
     send_photo,
     send_with_fallback,
-    strip_sentinels,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,8 +76,10 @@ async def _process_content_task(bot: Bot, user_id: int, task: _mq.MessageTask) -
                 raise
             except Exception:
                 try:
-                    # Fallback: plain text with sentinels stripped
-                    plain_text = strip_sentinels(task.text or full_text)
+                    # Fallback: plain Markdown (backend already emits
+                    # human-readable `> ` blockquotes, no post-processing
+                    # needed).
+                    plain_text = task.text or full_text
                     await bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=edit_msg_id,
@@ -182,12 +183,12 @@ async def _convert_status_to_content(
         raise
     except Exception:
         try:
-            # Fallback to plain text with sentinels stripped
-            plain = strip_sentinels(content_text)
+            # Fallback to plain Markdown (backend emits human-readable
+            # `> ` blockquotes; no post-processing needed).
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=msg_id,
-                text=plain,
+                text=content_text,
                 link_preview_options=NO_LINK_PREVIEW,
             )
             return msg_id
