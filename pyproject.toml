@@ -1,0 +1,59 @@
+[project]
+name = "ccmux-telegram"
+version = "0.1.0"
+description = "Telegram bot frontend for the ccmux Claude-tmux backend"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+dependencies = [
+    "ccmux>=0.1.0",
+    "python-telegram-bot[rate-limiter]>=21.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    "Pillow>=10.0.0",
+    "telegramify-markdown>=0.5.0,<1.0.0",
+]
+
+[project.scripts]
+ccmux-telegram = "ccmux_telegram.main:main"
+
+[project.optional-dependencies]
+dev = [
+    "pyright>=1.1.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.8.0",
+]
+
+[tool.uv.sources]
+ccmux = { path = "../ccmux-backend", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ccmux_telegram"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: tests using real filesystem or external processes",
+]
+
+[tool.coverage.run]
+source = ["ccmux_telegram"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "logger\\.",
+]
