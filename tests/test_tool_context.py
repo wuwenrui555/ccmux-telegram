@@ -118,3 +118,212 @@ class TestRecordAllStale:
         )
         dq.append(old)
         assert tool_context.get_pending("@1") is None
+
+
+import json
+
+from ccmux.api import ClaudeMessage
+
+
+def _write_jsonl(path, entries):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+
+
+class TestRecordJsonl:
+    @pytest.mark.asyncio
+    async def test_record_populates_input_from_jsonl(self, tmp_path):
+        from ccmux_telegram import tool_context
+
+        session_id = "sess-1"
+        window_id = "@1"
+        encoded_cwd = "encoded-cwd"
+        jsonl = tmp_path / encoded_cwd / f"{session_id}.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                {
+                    "type": "assistant",
+                    "sessionId": session_id,
+                    "cwd": "/tmp/proj",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tuse-42",
+                                "name": "Edit",
+                                "input": {
+                                    "file_path": "/tmp/proj/a.py",
+                                    "old_string": "old",
+                                    "new_string": "new",
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        )
+
+        wb = MagicMock()
+        wb.cwd = "/tmp/proj"
+
+        backend = MagicMock()
+        backend.get_window_binding.return_value = wb
+
+        fake_encode = MagicMock(return_value=encoded_cwd)
+
+        fake_config = MagicMock()
+        fake_config.claude_projects_path = tmp_path
+
+        with (
+            patch.object(tool_context, "get_default_backend", return_value=backend),
+            patch.object(
+                tool_context, "WindowBindings", MagicMock(encode_cwd=fake_encode)
+            ),
+            patch.object(tool_context, "_backend_config", fake_config),
+        ):
+            msg = ClaudeMessage(
+                session_id=session_id,
+                role="assistant",
+                content_type="tool_use",
+                text="**Edit**(a.py)",
+                tool_use_id="tuse-42",
+                tool_name="Edit",
+                is_complete=True,
+            )
+            await tool_context.record(msg, window_id)
+
+        entry = tool_context.get_pending(window_id)
+        assert entry is not None
+        assert entry.tool_name == "Edit"
+        assert entry.tool_use_id == "tuse-42"
+        assert entry.input == {
+            "file_path": "/tmp/proj/a.py",
+            "old_string": "old",
+            "new_string": "new",
+        }
+
+    @pytest.mark.asyncio
+    async def test_record_tolerates_missing_file(self, tmp_path):
+        from ccmux_telegram import tool_context
+
+        wb = MagicMock()
+        wb.cwd = "/tmp/proj"
+        backend = MagicMock()
+        backend.get_window_binding.return_value = wb
+        fake_config = MagicMock()
+        fake_config.claude_projects_path = tmp_path  # file does not exist
+
+        with (
+            patch.object(tool_context, "get_default_backend", return_value=backend),
+            patch.object(
+                tool_context,
+                "WindowBindings",
+                MagicMock(encode_cwd=MagicMock(return_value="nope")),
+            ),
+            patch.object(tool_context, "_backend_config", fake_config),
+        ):
+            msg = ClaudeMessage(
+                session_id="missing-sess",
+                role="assistant",
+                content_type="tool_use",
+                text="**Bash**(ls)",
+                tool_use_id="tuse-99",
+                tool_name="Bash",
+                is_complete=True,
+            )
+            await tool_context.record(msg, "@1")
+
+        entry = tool_context.get_pending("@1")
+        assert entry is not None
+        assert entry.tool_use_id == "tuse-99"
+        assert entry.input is None
+
+    @pytest.mark.asyncio
+    async def test_record_tolerates_missing_tool_use_id_in_tail(self, tmp_path):
+        from ccmux_telegram import tool_context
+
+        session_id = "sess-2"
+        encoded_cwd = "e2"
+        jsonl = tmp_path / encoded_cwd / f"{session_id}.jsonl"
+        _write_jsonl(
+            jsonl,
+            [
+                {
+                    "type": "assistant",
+                    "sessionId": session_id,
+                    "cwd": "/tmp/proj",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "other-id",
+                                "name": "Read",
+                                "input": {"file_path": "/x"},
+                            }
+                        ]
+                    },
+                }
+            ],
+        )
+
+        wb = MagicMock()
+        wb.cwd = "/tmp/proj"
+        backend = MagicMock()
+        backend.get_window_binding.return_value = wb
+        fake_config = MagicMock()
+        fake_config.claude_projects_path = tmp_path
+
+        with (
+            patch.object(tool_context, "get_default_backend", return_value=backend),
+            patch.object(
+                tool_context,
+                "WindowBindings",
+                MagicMock(encode_cwd=MagicMock(return_value=encoded_cwd)),
+            ),
+            patch.object(tool_context, "_backend_config", fake_config),
+        ):
+            msg = ClaudeMessage(
+                session_id=session_id,
+                role="assistant",
+                content_type="tool_use",
+                text="**Edit**(a.py)",
+                tool_use_id="not-in-file",
+                tool_name="Edit",
+                is_complete=True,
+            )
+            await tool_context.record(msg, "@1")
+
+        entry = tool_context.get_pending("@1")
+        assert entry is not None
+        assert entry.input is None
+
+    @pytest.mark.asyncio
+    async def test_record_skips_when_binding_missing(self, tmp_path):
+        from ccmux_telegram import tool_context
+
+        backend = MagicMock()
+        backend.get_window_binding.return_value = None
+        fake_config = MagicMock()
+        fake_config.claude_projects_path = tmp_path
+
+        with (
+            patch.object(tool_context, "get_default_backend", return_value=backend),
+            patch.object(tool_context, "_backend_config", fake_config),
+        ):
+            msg = ClaudeMessage(
+                session_id="s",
+                role="assistant",
+                content_type="tool_use",
+                text="**X**",
+                tool_use_id="t1",
+                tool_name="X",
+                is_complete=True,
+            )
+            await tool_context.record(msg, "@nope")
+
+        entry = tool_context.get_pending("@nope")
+        assert entry is not None
+        assert entry.input is None
