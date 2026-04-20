@@ -193,10 +193,12 @@ async def handle_new_message(msg: ClaudeMessage, bot: Bot) -> None:
             user_id, bot, thread_id, chat_id=topic.group_chat_id
         )
 
-    # Skip tool call notifications when CCMUX_SHOW_TOOL_CALLS=false
-    if not config.show_tool_calls and msg.content_type in (
-        "tool_use",
-        "tool_result",
+    # Skip tool call notifications when CCMUX_SHOW_TOOL_CALLS=false,
+    # unless the tool name is on CCMUX_TOOL_CALLS_ALLOWLIST (default: "Skill").
+    if (
+        not config.show_tool_calls
+        and msg.content_type in ("tool_use", "tool_result")
+        and msg.tool_name not in config.tool_calls_allowlist
     ):
         return
 
@@ -206,13 +208,15 @@ async def handle_new_message(msg: ClaudeMessage, bot: Bot) -> None:
     if not config.show_thinking and msg.content_type == "thinking":
         return
 
-    # Skip Skill tool_result bodies when CCMUX_SHOW_SKILL_BODIES=false.
-    # The Skill tool_use summary is preserved; only the full skill body
-    # (tool_result) is suppressed to avoid flooding the chat.
+    # Claude Code injects the full skill body as a plain user-role text
+    # message (not a tool_result) that always starts with
+    # "Base directory for this skill:". Suppress it when
+    # CCMUX_SHOW_SKILL_BODIES=false.
     if (
         not config.show_skill_bodies
-        and msg.content_type == "tool_result"
-        and msg.tool_name == "Skill"
+        and msg.role == "user"
+        and msg.content_type == "text"
+        and msg.text.lstrip().startswith("Base directory for this skill:")
     ):
         return
 

@@ -70,6 +70,14 @@ class Config:
         self.show_skill_bodies = (
             os.getenv("CCMUX_SHOW_SKILL_BODIES", "").lower() == "true"
         )
+        # Tools whose tool_use/tool_result are forwarded even when
+        # CCMUX_SHOW_TOOL_CALLS=false. Defaults to "Skill" so a skill
+        # invocation still surfaces a one-line "**Skill**(name)" signal.
+        self.tool_calls_allowlist: frozenset[str] = frozenset(
+            name.strip()
+            for name in os.getenv("CCMUX_TOOL_CALLS_ALLOWLIST", "Skill").split(",")
+            if name.strip()
+        )
         self.show_hidden_dirs = (
             os.getenv("CCMUX_SHOW_HIDDEN_DIRS", "").lower() == "true"
         )
