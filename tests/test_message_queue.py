@@ -27,11 +27,13 @@ def clear_queue_state():
     queue_mod._queue_locks.clear()
     queue_mod._flood_until.clear()
     queue_mod._status_msg_info.clear()
+    queue_mod._status_last_enqueue.clear()
     queue_mod._tool_msg_ids.clear()
     yield
     queue_mod._message_queues.clear()
     queue_mod._queue_workers.clear()
     queue_mod._queue_locks.clear()
+    queue_mod._status_last_enqueue.clear()
 
 
 @pytest.mark.asyncio
@@ -98,6 +100,135 @@ async def test_flood_control_keyed_by_chat_id():
         chat_id=666,
     )
     assert (1, 12) in queue_mod._message_queues
+
+    await shutdown_workers()
+
+
+@pytest.mark.asyncio
+async def test_status_throttle_drops_updates_within_interval(monkeypatch):
+    """Second text update within STATUS_MIN_INTERVAL is dropped."""
+    from ccmux_telegram.message_queue import enqueue_status_update
+
+    monkeypatch.setattr(queue_mod, "STATUS_MIN_INTERVAL", 5.0)
+    clock = [1000.0]
+    monkeypatch.setattr(queue_mod.time, "monotonic", lambda: clock[0])
+
+    bot = MagicMock()
+
+    # First update: goes through
+    await enqueue_status_update(
+        bot,
+        user_id=1,
+        window_id="@1",
+        status_text="Computing… (0s)",
+        thread_id=10,
+        chat_id=555,
+    )
+    q = get_message_queue(1, 10)
+    assert q is not None and q.qsize() == 1
+
+    # 2s later — still within 5s window → dropped
+    clock[0] = 1002.0
+    await enqueue_status_update(
+        bot,
+        user_id=1,
+        window_id="@1",
+        status_text="Computing… (2s)",
+        thread_id=10,
+        chat_id=555,
+    )
+    assert q.qsize() == 1
+
+    # 6s after first — past interval → goes through
+    clock[0] = 1006.0
+    await enqueue_status_update(
+        bot,
+        user_id=1,
+        window_id="@1",
+        status_text="Computing… (6s)",
+        thread_id=10,
+        chat_id=555,
+    )
+    assert q.qsize() == 2
+
+    await shutdown_workers()
+
+
+@pytest.mark.asyncio
+async def test_status_clear_bypasses_throttle_and_resets_cursor(monkeypatch):
+    """Clears are never throttled, and reset the cursor so the next update lands immediately."""
+    from ccmux_telegram.message_queue import enqueue_status_update
+
+    monkeypatch.setattr(queue_mod, "STATUS_MIN_INTERVAL", 5.0)
+    clock = [2000.0]
+    monkeypatch.setattr(queue_mod.time, "monotonic", lambda: clock[0])
+
+    bot = MagicMock()
+
+    # First update records cursor at t=2000
+    await enqueue_status_update(
+        bot,
+        user_id=1,
+        window_id="@1",
+        status_text="Computing… (0s)",
+        thread_id=10,
+        chat_id=555,
+    )
+    q = get_message_queue(1, 10)
+    assert q is not None and q.qsize() == 1
+    assert (1, 10) in queue_mod._status_last_enqueue
+
+    # Clear arrives 1s later — throttle must NOT drop a clear
+    clock[0] = 2001.0
+    await enqueue_status_update(
+        bot,
+        user_id=1,
+        window_id="@1",
+        status_text=None,
+        thread_id=10,
+        chat_id=555,
+    )
+    assert q.qsize() == 2
+    # Cursor reset so the next update isn't blocked by the previous burst
+    assert (1, 10) not in queue_mod._status_last_enqueue
+
+    # New update 1s after clear — should land immediately
+    clock[0] = 2002.0
+    await enqueue_status_update(
+        bot,
+        user_id=1,
+        window_id="@1",
+        status_text="Wandering…",
+        thread_id=10,
+        chat_id=555,
+    )
+    assert q.qsize() == 3
+
+    await shutdown_workers()
+
+
+@pytest.mark.asyncio
+async def test_status_throttle_disabled_when_interval_zero(monkeypatch):
+    """STATUS_MIN_INTERVAL <= 0 disables the throttle entirely."""
+    from ccmux_telegram.message_queue import enqueue_status_update
+
+    monkeypatch.setattr(queue_mod, "STATUS_MIN_INTERVAL", 0.0)
+    clock = [3000.0]
+    monkeypatch.setattr(queue_mod.time, "monotonic", lambda: clock[0])
+
+    bot = MagicMock()
+    for i in range(3):
+        await enqueue_status_update(
+            bot,
+            user_id=1,
+            window_id="@1",
+            status_text=f"Computing… ({i}s)",
+            thread_id=10,
+            chat_id=555,
+        )
+
+    q = get_message_queue(1, 10)
+    assert q is not None and q.qsize() == 3
 
     await shutdown_workers()
 

@@ -21,6 +21,7 @@ Key components:
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Literal
@@ -39,6 +40,14 @@ def _ensure_formatted(text: str) -> str:
 
 # Merge limit for content messages
 MERGE_MAX_LENGTH = 3800  # Leave room for markdown conversion overhead
+
+
+# Minimum seconds between consecutive status text updates for the same
+# (user, thread). Caps edit frequency so the ticking "Computing… (Ns)"
+# counter doesn't burn through Telegram's per-message edit limit or
+# crowd out content messages. Clears are not throttled — they signal
+# "thinking ended" and should land immediately. Set to 0 to disable.
+STATUS_MIN_INTERVAL = float(os.getenv("CCMUX_STATUS_MIN_INTERVAL", "5.0"))
 
 
 @dataclass
@@ -73,6 +82,11 @@ _tool_msg_ids: dict[tuple[str, int, int], int] = {}
 
 # Status message tracking: (user_id, thread_id_or_0) -> (message_id, window_id, last_text)
 _status_msg_info: dict[tuple[int, int], tuple[int, str, str]] = {}
+
+# Per-(user, thread) throttle cursor: monotonic time of the last status text
+# update accepted by enqueue_status_update. Consulted alongside STATUS_MIN_INTERVAL
+# to drop intermediate ticks of the one-second status counter.
+_status_last_enqueue: dict[tuple[int, int], float] = {}
 
 # Track the most recent content message_id the bot has sent into each bound
 # topic. The watcher uses this to build deep-links that land the user near
@@ -172,20 +186,30 @@ async def enqueue_status_update(
     chat_id: int,
     thread_id: int | None = None,
 ) -> None:
-    """Enqueue status update. Skipped if text unchanged or during flood control."""
+    """Enqueue status update. Dropped if text unchanged, under throttle, or during flood control."""
     # Don't enqueue during flood control — they'd just be dropped
     flood_end = _flood_until.get(chat_id, 0)
     if flood_end > time.monotonic():
         return
 
     tid = thread_id or 0
+    skey = (user_id, tid)
 
-    # Deduplicate: skip if text matches what's already displayed
     if status_text:
-        skey = (user_id, tid)
+        # Deduplicate: skip if text matches what's already displayed
         info = _status_msg_info.get(skey)
         if info and info[1] == window_id and info[2] == status_text:
             return
+
+        # Throttle: cap updates to one per STATUS_MIN_INTERVAL seconds
+        # (defaults to 5s via CCMUX_STATUS_MIN_INTERVAL). Interval <= 0
+        # disables throttling.
+        if STATUS_MIN_INTERVAL > 0:
+            now = time.monotonic()
+            last = _status_last_enqueue.get(skey, 0.0)
+            if now - last < STATUS_MIN_INTERVAL:
+                return
+            _status_last_enqueue[skey] = now
 
     queue = get_or_create_queue(bot, user_id, tid)
 
@@ -204,6 +228,9 @@ async def enqueue_status_update(
             status_text[:50],
         )
     else:
+        # Clear resets the throttle cursor so the first status in the next
+        # thinking burst lands immediately.
+        _status_last_enqueue.pop(skey, None)
         task = MessageTask(
             task_type="status_clear", thread_id=thread_id, chat_id=chat_id
         )
@@ -220,6 +247,7 @@ def clear_status_msg_info(user_id: int, thread_id: int | None = None) -> None:
     """Clear status message tracking for a user (and optionally a specific thread)."""
     skey = (user_id, thread_id or 0)
     _status_msg_info.pop(skey, None)
+    _status_last_enqueue.pop(skey, None)
 
 
 def clear_tool_msg_ids_for_topic(user_id: int, thread_id: int | None = None) -> None:
