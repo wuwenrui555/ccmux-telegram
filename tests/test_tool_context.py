@@ -1,9 +1,12 @@
 """Tests for tool_context — pending tool_use cache, TTL, and formatters."""
 
+import json
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from ccmux.api import ClaudeMessage
 
 
 @pytest.fixture(autouse=True)
@@ -118,11 +121,6 @@ class TestRecordAllStale:
         )
         dq.append(old)
         assert tool_context.get_pending("@1") is None
-
-
-import json
-
-from ccmux.api import ClaudeMessage
 
 
 def _write_jsonl(path, entries):
