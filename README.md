@@ -9,7 +9,7 @@ This is a thin client. All the heavy lifting — tmux orchestration, JSONL parsi
 ## Features
 
 - One Telegram topic per tmux session, one tmux session per Claude instance
-- Real-time relay of text, thinking, tool_use / tool_result, interactive prompts
+- Real-time relay of text, thinking, tool_use / tool_result, interactive prompts (permission prompts include the pending tool's file path, diff, or command inline so you can decide without scrolling back)
 - Inline picker flows: bind to existing tmux session, create new session, resume Claude session
 - Slash commands: `/start`, `/text`, `/esc`, `/usage`, `/history`, `/unbind`, `/rebind`, `/watcher`
 - Voice-message transcription (OpenAI Whisper, optional)
@@ -50,6 +50,7 @@ Environment variables that control how much noise the bot pushes to Telegram. Al
 
 - `CCMUX_SHOW_TOOL_CALLS` (default `true`) — relay `tool_use` / `tool_result` blocks (Read, Edit, Bash, …). Set `false` to keep only assistant text + status line.
 - `CCMUX_SHOW_THINKING` (default `true`) — relay extended-thinking blocks. Note that current Claude Code JSONL stores only a signature for these (the content is omitted upstream), so the bot can only render a `∴ Thinking… (thinking)` placeholder. Set `false` to drop it entirely.
+- `CCMUX_SHOW_SKILL_BODIES` (default `false`) — relay the full body of a `Skill` tool result. Off by default so skill invocations do not flood the chat; the `Skill(name)` tool-use summary is always shown. Set `true` to get the full body.
 - `CCMUX_SHOW_HIDDEN_DIRS` (default `false`) — show dotfile-prefixed directories in the cwd picker.
 - `CCMUX_DANGEROUSLY_SKIP_PERMISSIONS` (default `false`) — pass `--dangerously-skip-permissions` to newly spawned Claude sessions.
 - `CCMUX_SHOW_USER_MESSAGES` (default `true`, backend env) — echo your own messages back into the topic. Set `false` if you find the 👤-prefixed echo redundant.

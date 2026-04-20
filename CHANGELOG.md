@@ -4,6 +4,19 @@ All notable changes to `ccmux-telegram` are documented here. Versions
 are aligned with the backend `ccmux` library: a frontend 1.x release
 depends on backend 1.x.
 
+## [Unreleased]
+
+### Added
+
+- `CCMUX_SHOW_SKILL_BODIES` env flag (default `false`) that suppresses
+  `Skill` tool_result bodies so Skill invocations do not flood the chat.
+  The `Skill(name)` tool-use summary is always shown; only the full body
+  is gated. Set `true` to get the full body back.
+- Permission-prompt and bash-approval Telegram messages now include the
+  pending tool's input (file path, unified diff, command, or key/value
+  dump) inline, fetched from the session JSONL on demand. Users can
+  approve or reject without scrolling back for context.
+
 ## 1.1.0 — 2026-04-19
 
 ### Added

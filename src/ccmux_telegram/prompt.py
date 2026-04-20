@@ -18,6 +18,7 @@ import logging
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from . import tool_context
 from .runtime import get_topic
 from ccmux.api import extract_interactive_content, tmux_registry
 from .util import get_thread_id, get_tm_and_window
@@ -148,6 +149,14 @@ async def handle_interactive_ui(
 
     # Send as plain text (no markdown conversion)
     text = content.content
+
+    # Prepend cached tool_context (Edit diff, Bash command, etc.) so the
+    # user can decide without scrolling back for the preceding tool_use.
+    cached = tool_context.get_pending(window_id)
+    if cached is not None:
+        header = tool_context.format_input_for_ui(cached.tool_name, cached.input)
+        if header:
+            text = f"{header}\n\n{text}"
 
     # Build thread kwargs for send_message
     thread_kwargs: dict[str, int] = {}
