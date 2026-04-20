@@ -301,18 +301,13 @@ async def handle_permission_callback(
     # callback, producing a duplicate handler invocation.
     await query.answer()
 
+    # Atomic claim on the session name. The first delivery gets "test",
+    # subsequent stale deliveries get None and bail silently so they
+    # cannot overwrite the first handler's success UI.
     session_name = (
-        context.user_data.get(SESSION_NAME_KEY, "") if context.user_data else ""
+        context.user_data.pop(SESSION_NAME_KEY, None) if context.user_data else None
     )
     if not session_name:
-        # Stale redelivery or a manual double-tap after the first click
-        # already popped SESSION_NAME_KEY. Refuse rather than proceed with
-        # an empty name (which would hit libtmux's BadSessionName).
-        clear_permission_picker_state(context.user_data)
-        await safe_edit(
-            query,
-            "⚠️ Session name missing (likely a duplicate tap). Start over.",
-        )
         return
 
     pending_tid = (
@@ -320,15 +315,12 @@ async def handle_permission_callback(
     )
     if pending_tid is None:
         pending_tid = get_thread_id(update)
-    clear_permission_picker_state(context.user_data)
     selected_path = (
-        context.user_data.get(SELECTED_PATH_KEY, str(Path.cwd()))
+        context.user_data.pop(SELECTED_PATH_KEY, str(Path.cwd()))
         if context.user_data
         else str(Path.cwd())
     )
-    if context.user_data is not None:
-        context.user_data.pop(SELECTED_PATH_KEY, None)
-        context.user_data.pop(SESSION_NAME_KEY, None)
+    clear_permission_picker_state(context.user_data)
 
     skip_permissions = data == CB_PERM_SKIP
 
