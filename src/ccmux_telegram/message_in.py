@@ -199,6 +199,16 @@ async def handle_new_message(msg: ClaudeMessage, bot: Bot) -> None:
     if not config.show_thinking and msg.content_type == "thinking":
         return
 
+    # Skip Skill tool_result bodies when CCMUX_SHOW_SKILL_BODIES=false.
+    # The Skill tool_use summary is preserved; only the full skill body
+    # (tool_result) is suppressed to avoid flooding the chat.
+    if (
+        not config.show_skill_bodies
+        and msg.content_type == "tool_result"
+        and msg.tool_name == "Skill"
+    ):
+        return
+
     parts = build_response_parts(
         msg.text,
         msg.is_complete,
