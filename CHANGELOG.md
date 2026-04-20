@@ -4,6 +4,17 @@ All notable changes to `ccmux-telegram` are documented here. Versions
 are aligned with the backend `ccmux` library: a frontend 1.x release
 depends on backend 1.x.
 
+## 1.0.1 — 2026-04-19
+
+### Fixed
+
+- CI test collection failed because `ccmux_telegram.config` instantiates
+  `Config()` at module import and raises when `TELEGRAM_BOT_TOKEN` /
+  `ALLOWED_USERS` are missing. `tests/conftest.py` now seeds fake
+  values at module load so pytest can collect and run without a real
+  bot token. Local dev still uses the real token from the shell env or
+  `.env` (conftest uses `os.environ.setdefault`, does not overwrite).
+
 ## 1.0.0 — 2026-04-19
 
 First stable release, paired with `ccmux` 1.0.0.
