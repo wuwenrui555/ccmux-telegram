@@ -29,6 +29,20 @@ class TestConfigValid:
         cfg = Config()
         assert cfg.is_user_allowed(99999) is False
 
+    def test_show_skill_bodies_default_false(self):
+        cfg = Config()
+        assert cfg.show_skill_bodies is False
+
+    def test_show_skill_bodies_true(self, monkeypatch):
+        monkeypatch.setenv("CCMUX_SHOW_SKILL_BODIES", "true")
+        cfg = Config()
+        assert cfg.show_skill_bodies is True
+
+    def test_show_skill_bodies_false_explicit(self, monkeypatch):
+        monkeypatch.setenv("CCMUX_SHOW_SKILL_BODIES", "false")
+        cfg = Config()
+        assert cfg.show_skill_bodies is False
+
 
 @pytest.mark.usefixtures("_base_env")
 class TestConfigMissingEnv:

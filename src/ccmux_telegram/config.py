@@ -67,6 +67,9 @@ class Config:
         # "∴ Thinking… (thinking)" placeholder. Default to true for
         # backward compatibility; set false to suppress.
         self.show_thinking = os.getenv("CCMUX_SHOW_THINKING", "true").lower() != "false"
+        self.show_skill_bodies = (
+            os.getenv("CCMUX_SHOW_SKILL_BODIES", "").lower() == "true"
+        )
         self.show_hidden_dirs = (
             os.getenv("CCMUX_SHOW_HIDDEN_DIRS", "").lower() == "true"
         )
