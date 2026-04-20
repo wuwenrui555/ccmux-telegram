@@ -114,9 +114,10 @@ async def get_tm_and_window(window_id: str):
 
 
 def has_window_binding(window_id: str, session_name: str) -> bool:
-    """Check if `tmux_claude_map.json` has a populated entry for this session.
+    """Check if the backend's window_bindings.json has a populated entry for this session.
 
-    Uses the backend's config.bindings_file to locate the map file.
+    Reads from the path exposed by `ccmux.config.config.bindings_file`
+    (default `~/.ccmux/window_bindings.json`).
     """
     from ccmux.config import config as backend_config
 
