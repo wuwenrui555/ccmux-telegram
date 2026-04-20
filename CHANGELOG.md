@@ -4,6 +4,27 @@ All notable changes to `ccmux-telegram` are documented here. Versions
 are aligned with the backend `ccmux` library: a frontend 1.x release
 depends on backend 1.x.
 
+## 1.1.0 — 2026-04-19
+
+### Added
+
+- `STATUS_MIN_INTERVAL` (env: `CCMUX_STATUS_MIN_INTERVAL`, default
+  `5.0` seconds) — producer-side throttle in `enqueue_status_update`.
+  Caps status text updates to one edit per interval per (user, thread),
+  so the ticking "Computing… (Ns)" counter no longer consumes one
+  Telegram edit per second. Set to `0` to disable.
+
+### Changed
+
+- `status_line._consume_one` no longer suppresses status updates when
+  the content queue has pending work. The producer-side throttle keeps
+  edit volume bounded while restoring the "Claude is alive" signal
+  during active tool-call bursts. Previously status was dropped
+  entirely whenever content was flowing.
+- `status_clear` tasks are not throttled and now reset the throttle
+  cursor, so the first status of the next thinking burst lands
+  immediately rather than waiting out the 5-second window.
+
 ## 1.0.1 — 2026-04-19
 
 ### Fixed
