@@ -4,9 +4,18 @@ Provides factories for building JSONL entries, content blocks,
 and sample pane text for terminal parser tests.
 """
 
-import time
+import os
 
-import pytest
+# Populate required config env vars before any `ccmux_telegram.*` module is
+# imported. `config.py` instantiates `Config()` at module level and raises
+# if TELEGRAM_BOT_TOKEN / ALLOWED_USERS are missing, which breaks test
+# collection in environments (e.g. CI) that don't have a dotenv on disk.
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
+os.environ.setdefault("ALLOWED_USERS", "0")
+
+import time  # noqa: E402
+
+import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
