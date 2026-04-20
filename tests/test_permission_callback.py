@@ -78,20 +78,21 @@ async def test_answers_query_before_heavy_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_session_name_short_circuits() -> None:
-    """When session_name is missing (e.g. stale redelivery), do not create.
+async def test_duplicate_delivery_is_silent() -> None:
+    """Stale redelivery after SESSION_NAME_KEY was consumed must be silent.
 
-    Defence-in-depth: even with `query.answer()` in place, a user who
-    double-taps the button or a delayed retransmission could still fire
-    a second callback after SESSION_NAME_KEY has been popped. Refuse it.
+    If the first handler already popped the name (and its success path
+    already rendered "✅ Created" on the picker message), the second
+    handler must NOT call safe_edit with an error — that would overwrite
+    the first handler's success UI. Just return.
     """
     from ccmux_telegram import binding_callbacks
 
     update, query = _make_update_with_query("PERM_NORMAL")
     ctx = _make_context(
         {
-            # SESSION_NAME_KEY intentionally absent — simulates a stale
-            # second callback arriving after the first handler popped it.
+            # SESSION_NAME_KEY intentionally absent — simulates the second
+            # callback arriving after the first handler popped the name.
             binding_callbacks.SELECTED_PATH_KEY: "/tmp",
             binding_callbacks.PENDING_THREAD_ID_KEY: 7,
         }
@@ -101,17 +102,18 @@ async def test_empty_session_name_short_circuits() -> None:
         patch.object(
             binding_callbacks, "_create_session_and_bind", new=AsyncMock()
         ) as create,
-        patch.object(binding_callbacks, "safe_edit", new=AsyncMock()),
+        patch.object(binding_callbacks, "safe_edit", new=AsyncMock()) as edit,
     ):
         await binding_callbacks.handle_permission_callback(update, ctx)
 
     create.assert_not_called()
+    edit.assert_not_called()
     query.answer.assert_awaited()
 
 
 @pytest.mark.asyncio
-async def test_empty_session_name_user_data_none_short_circuits() -> None:
-    """When context.user_data is None entirely, do not create either."""
+async def test_user_data_none_is_silent() -> None:
+    """When context.user_data is None entirely, silently noop."""
     from ccmux_telegram import binding_callbacks
 
     update, query = _make_update_with_query("PERM_SKIP")
@@ -121,11 +123,37 @@ async def test_empty_session_name_user_data_none_short_circuits() -> None:
         patch.object(
             binding_callbacks, "_create_session_and_bind", new=AsyncMock()
         ) as create,
-        patch.object(binding_callbacks, "safe_edit", new=AsyncMock()),
+        patch.object(binding_callbacks, "safe_edit", new=AsyncMock()) as edit,
     ):
         await binding_callbacks.handle_permission_callback(update, ctx)
 
     create.assert_not_called()
+    edit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_session_name_popped_by_first_call() -> None:
+    """After the handler runs once, SESSION_NAME_KEY must be gone.
+
+    Guards the atomic-pop contract that makes duplicate deliveries
+    observable as no-ops on subsequent handler entries.
+    """
+    from ccmux_telegram import binding_callbacks
+
+    update, _ = _make_update_with_query("PERM_NORMAL")
+    user_data = {
+        binding_callbacks.SESSION_NAME_KEY: "myproj",
+        binding_callbacks.SELECTED_PATH_KEY: "/tmp",
+        binding_callbacks.PENDING_THREAD_ID_KEY: 7,
+    }
+    ctx = _make_context(user_data)
+
+    with patch.object(
+        binding_callbacks, "_create_session_and_bind", new=AsyncMock()
+    ):
+        await binding_callbacks.handle_permission_callback(update, ctx)
+
+    assert binding_callbacks.SESSION_NAME_KEY not in user_data
 
 
 @pytest.mark.asyncio
