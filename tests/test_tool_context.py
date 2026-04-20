@@ -327,3 +327,88 @@ class TestRecordJsonl:
         entry = tool_context.get_pending("@nope")
         assert entry is not None
         assert entry.input is None
+
+
+class TestFormatInputForUi:
+    def test_edit_renders_unified_diff(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui(
+            "Edit",
+            {
+                "file_path": "/tmp/proj/a.py",
+                "old_string": "x = 1\ny = 2\n",
+                "new_string": "x = 2\ny = 2\n",
+            },
+        )
+        assert "/tmp/proj/a.py" in text
+        assert "-x = 1" in text
+        assert "+x = 2" in text
+        assert text.lstrip().startswith(">") or "\n>" in text
+
+    def test_notebook_edit_renders_diff_with_cell_id(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui(
+            "NotebookEdit",
+            {
+                "notebook_path": "/tmp/proj/a.ipynb",
+                "cell_id": "c1",
+                "old_string": "foo",
+                "new_string": "bar",
+            },
+        )
+        assert "/tmp/proj/a.ipynb" in text
+        assert "c1" in text
+
+    def test_write_renders_path_and_content_preview(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui(
+            "Write",
+            {"file_path": "/tmp/x.txt", "content": "hello world\n" * 5},
+        )
+        assert "/tmp/x.txt" in text
+        assert "hello world" in text
+
+    def test_bash_renders_command_and_description(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui(
+            "Bash",
+            {"command": "ls -la", "description": "list files"},
+        )
+        assert "ls -la" in text
+        assert "list files" in text
+
+    def test_bash_without_description(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui("Bash", {"command": "pwd"})
+        assert "pwd" in text
+
+    def test_unknown_tool_falls_back_to_key_value(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui(
+            "SomethingNew",
+            {"foo": "bar", "n": 7, "flag": True},
+        )
+        assert "foo" in text and "bar" in text
+        assert "n" in text and "7" in text
+        assert "flag" in text
+
+    def test_none_input_returns_tool_name_only(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui("Edit", None)
+        assert "Edit" in text
+
+    def test_non_string_values_are_coerced(self):
+        from ccmux_telegram.tool_context import format_input_for_ui
+
+        text = format_input_for_ui(
+            "Edit",
+            {"file_path": 42, "old_string": None, "new_string": ["a", "b"]},
+        )
+        assert "42" in text

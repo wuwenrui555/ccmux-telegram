@@ -14,10 +14,12 @@ entries older than `_TTL_SECONDS` are ignored by `get_pending`.
 from __future__ import annotations
 
 import collections
+import difflib
 import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import aiofiles
 
@@ -163,3 +165,94 @@ async def record(msg: ClaudeMessage, window_id: str) -> None:
         recorded_at=time.monotonic(),
     )
     _deque_for(window_id).append(entry)
+
+
+_VALUE_CLIP = 600
+
+
+def _coerce_str(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _clip(text: str, limit: int = _VALUE_CLIP) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def _as_blockquote(text: str) -> str:
+    if not text:
+        return ""
+    return "\n".join(f"> {line}" if line else ">" for line in text.split("\n"))
+
+
+def _format_edit(input_dict: dict) -> str:
+    file_path = _coerce_str(
+        input_dict.get("file_path") or input_dict.get("notebook_path")
+    )
+    cell_id = input_dict.get("cell_id")
+    header = f"**Edit** `{file_path}`"
+    if cell_id:
+        header += f" (cell `{_coerce_str(cell_id)}`)"
+
+    old = _coerce_str(input_dict.get("old_string")).splitlines(keepends=False)
+    new = _coerce_str(input_dict.get("new_string")).splitlines(keepends=False)
+    diff_lines = list(
+        difflib.unified_diff(old, new, fromfile="old", tofile="new", lineterm="")
+    )
+    diff = "\n".join(diff_lines) if diff_lines else "(no diff)"
+    diff = _clip(diff)
+    return header + "\n" + _as_blockquote(diff)
+
+
+def _format_write(input_dict: dict) -> str:
+    file_path = _coerce_str(input_dict.get("file_path"))
+    content = _clip(_coerce_str(input_dict.get("content")))
+    header = f"**Write** `{file_path}`"
+    body = _as_blockquote(content) if content else ""
+    return header + ("\n" + body if body else "")
+
+
+def _format_bash(input_dict: dict) -> str:
+    command = _coerce_str(input_dict.get("command"))
+    description = _coerce_str(input_dict.get("description"))
+    lines = [f"**Bash** `{_clip(command, 200)}`"]
+    if description:
+        lines.append(_clip(description, 200))
+    return "\n".join(lines)
+
+
+def _format_fallback(tool_name: str, input_dict: dict) -> str:
+    items: list[str] = []
+    for k, v in input_dict.items():
+        items.append(f"{k}: {_clip(_coerce_str(v), 200)}")
+    body = "\n".join(items)
+    body = _clip(body)
+    return f"**{tool_name}**\n" + _as_blockquote(body)
+
+
+def format_input_for_ui(tool_name: str, input_dict: dict | None) -> str:
+    """Render a tool's input as Markdown for injection into a permission UI message.
+
+    Output is standard Markdown: a short header line plus (for long values)
+    a `>` blockquote region. The Telegram send layer turns contiguous
+    blockquotes into expandable quotes.
+    """
+    if input_dict is None:
+        return f"**{tool_name}**"
+
+    try:
+        if tool_name in ("Edit", "NotebookEdit"):
+            return _format_edit(input_dict)
+        if tool_name == "Write":
+            return _format_write(input_dict)
+        if tool_name == "Bash":
+            return _format_bash(input_dict)
+        return _format_fallback(tool_name, input_dict)
+    except Exception as e:
+        logger.debug("format_input_for_ui failed for %s: %s", tool_name, e)
+        return f"**{tool_name}**"
