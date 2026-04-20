@@ -295,6 +295,26 @@ async def handle_permission_callback(
     assert user
     data = query.data
 
+    # Ack the callback up front. The creation flow below can take several
+    # seconds (hook timeout wait, state writes); without an early ack the
+    # Telegram client treats the button as pending and can redeliver the
+    # callback, producing a duplicate handler invocation.
+    await query.answer()
+
+    session_name = (
+        context.user_data.get(SESSION_NAME_KEY, "") if context.user_data else ""
+    )
+    if not session_name:
+        # Stale redelivery or a manual double-tap after the first click
+        # already popped SESSION_NAME_KEY. Refuse rather than proceed with
+        # an empty name (which would hit libtmux's BadSessionName).
+        clear_permission_picker_state(context.user_data)
+        await safe_edit(
+            query,
+            "⚠️ Session name missing (likely a duplicate tap). Start over.",
+        )
+        return
+
     pending_tid = (
         context.user_data.get(PENDING_THREAD_ID_KEY) if context.user_data else None
     )
@@ -305,9 +325,6 @@ async def handle_permission_callback(
         context.user_data.get(SELECTED_PATH_KEY, str(Path.cwd()))
         if context.user_data
         else str(Path.cwd())
-    )
-    session_name = (
-        context.user_data.get(SESSION_NAME_KEY, "") if context.user_data else ""
     )
     if context.user_data is not None:
         context.user_data.pop(SELECTED_PATH_KEY, None)
