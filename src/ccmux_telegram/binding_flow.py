@@ -31,6 +31,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from ccmux.api import tmux_registry, sanitize_session_name
+from .claude_trust import mark_dir_trusted
 from .runtime import (
     iter_topics_joined,
     topics as _topics,
@@ -263,6 +264,15 @@ async def _create_session_and_bind(
     or from CB_TMUX_WIN_NEW for new windows in existing sessions.
     """
     tm = tmux_registry.get_or_create(session_name)
+
+    # Claude Code gates new directories behind a "Trust this folder?"
+    # dialog. Answering that dialog is a prerequisite for SessionStart
+    # hooks to fire; without the hook, window_bindings never gets the
+    # new window and the user sees "has no window yet" on send. The
+    # picker flow is explicit user consent for this directory, so
+    # pre-mark it as trusted. Best-effort: if this fails, Claude will
+    # show its own dialog as before.
+    mark_dir_trusted(selected_path)
 
     # Check if session already exists (binding to existing session)
     existing_session = tm.get_session()
