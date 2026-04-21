@@ -6,6 +6,32 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 2.2.0 — 2026-04-21
+
+### Added
+
+- `status_render.render_status_text` translates the raw TodoWrite
+  block returned by backend v2.5.0 into what reads cleanly inside a
+  Telegram message. Rendering rules:
+  - drop the `⎿` elbow connector,
+  - normalize every row's leading whitespace to two spaces,
+  - map unicode checkbox glyphs to ASCII brackets
+    (`◻`/`☐` → `[ ]`, `◼` → `[>]`, `✔`/`✓`/`☒` → `[x]`),
+  - wrap completed rows in GitHub-flavored `~~…~~` so
+    telegramify_markdown converts to MarkdownV2 single-tilde
+    strikethrough,
+  - truncate rows to 50 characters, preserving the closing `~~` on
+    completed rows so MarkdownV2 parsing stays balanced.
+- Wired into `_queue_status.py` at both the edit-in-place and
+  initial-send paths.
+
+### Changed
+
+- `ccmux` dependency bumped to `>=2.5.0,<3.0.0`. Backend v2.5.0
+  returns raw pane text; v2.4.0 and earlier returned pre-formatted
+  ASCII brackets which would double-translate with the new render
+  layer.
+
 ## 2.1.2 — 2026-04-21
 
 ### Fixed
