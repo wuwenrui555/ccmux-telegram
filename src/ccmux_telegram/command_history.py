@@ -78,6 +78,12 @@ async def send_history(
             start_byte=start_byte,
             end_byte=end_byte if end_byte > 0 else None,
         )
+    logger.info(
+        "send_history %s: %d messages (unread=%s)",
+        display_name,
+        len(messages),
+        is_unread,
+    )
 
     if not messages:
         if is_unread:
@@ -180,6 +186,7 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     thread_id = get_thread_id(update)
     topic = get_topic(user.id, thread_id)
+    logger.info("/history user=%d thread=%s", user.id, thread_id)
     if not topic:
         await safe_reply(update.message, "❌ No session bound to this topic.")
         return

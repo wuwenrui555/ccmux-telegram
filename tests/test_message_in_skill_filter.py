@@ -29,47 +29,37 @@ def _patch_config(monkeypatch):
     return cfg
 
 
-class TestToolContextWiring:
+class TestHandleNewMessageDoesNotRaceStateMonitor:
+    """Regression: state_monitor owns the interactive-msg lifecycle.
+
+    Claude Code 2.1.x writes a non-PROMPT ``tool_use`` (Read/Write/Edit/
+    Bash) to JSONL while its permission UI is still on the pane. Before
+    this fix, ``handle_new_message`` blanket-cleared the interactive
+    msg on any non-PROMPT tool_use, racing state_monitor's freshly
+    sent Blocked message. Keep state_monitor as the single clearer."""
+
     @pytest.mark.asyncio
-    async def test_tool_use_calls_record(self, _patch_config):
+    async def test_non_prompt_tool_use_does_not_clear_interactive_msg(
+        self, _patch_config
+    ):
         from ccmux_telegram import message_in
+        from ccmux_telegram.prompt_state import (
+            _interactive_mode,
+            _interactive_msgs,
+            set_interactive_mode,
+            set_interactive_msg_id,
+        )
+
+        _interactive_mode.clear()
+        _interactive_msgs.clear()
+        set_interactive_msg_id(1, 17399, 42)
+        set_interactive_mode(1, "@5", 42)
 
         msg = ClaudeMessage(
             session_id="s1",
             role="assistant",
             content_type="tool_use",
-            text="**Edit**(a.py)",
-            tool_use_id="t1",
-            tool_name="Edit",
-            is_complete=True,
-        )
-        with (
-            patch.object(
-                message_in,
-                "get_topic_for_claude_session",
-                return_value=_make_topic(),
-            ),
-            patch.object(message_in, "enqueue_content_message", new=AsyncMock()),
-            patch.object(message_in, "tool_context") as tc,
-        ):
-            tc.record = AsyncMock()
-            tc.clear = MagicMock()
-            await message_in.handle_new_message("test-instance", msg, AsyncMock())
-
-        tc.record.assert_awaited_once()
-        args, _ = tc.record.call_args
-        assert args[0] is msg
-        assert args[1] == "@5"
-
-    @pytest.mark.asyncio
-    async def test_tool_result_calls_clear(self, _patch_config):
-        from ccmux_telegram import message_in
-
-        msg = ClaudeMessage(
-            session_id="s1",
-            role="assistant",
-            content_type="tool_result",
-            text="  ⎿  Read 10 lines",
+            text="**Read**(/etc/passwd)",
             tool_use_id="t1",
             tool_name="Read",
             is_complete=True,
@@ -81,40 +71,15 @@ class TestToolContextWiring:
                 return_value=_make_topic(),
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()),
-            patch.object(message_in, "tool_context") as tc,
+            patch.object(message_in, "handle_interactive_ui", new=AsyncMock()) as iu,
         ):
-            tc.record = AsyncMock()
-            tc.clear = MagicMock()
             await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
-        tc.clear.assert_called_once_with("@5", "t1")
-
-    @pytest.mark.asyncio
-    async def test_text_message_does_not_touch_tool_context(self, _patch_config):
-        from ccmux_telegram import message_in
-
-        msg = ClaudeMessage(
-            session_id="s1",
-            role="assistant",
-            content_type="text",
-            text="hello",
-            is_complete=True,
-        )
-        with (
-            patch.object(
-                message_in,
-                "get_topic_for_claude_session",
-                return_value=_make_topic(),
-            ),
-            patch.object(message_in, "enqueue_content_message", new=AsyncMock()),
-            patch.object(message_in, "tool_context") as tc,
-        ):
-            tc.record = AsyncMock()
-            tc.clear = MagicMock()
-            await message_in.handle_new_message("test-instance", msg, AsyncMock())
-
-        tc.record.assert_not_called()
-        tc.clear.assert_not_called()
+        # The non-PROMPT tool path must not touch the interactive msg.
+        iu.assert_not_called()
+        assert _interactive_msgs.get((1, 42)) == 17399
+        _interactive_mode.clear()
+        _interactive_msgs.clear()
 
 
 @pytest.mark.asyncio

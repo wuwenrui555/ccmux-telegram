@@ -22,12 +22,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from telegram import (
+    Bot,
     CallbackQuery,
     InlineKeyboardMarkup,
     Message,
     Update,
     User,
 )
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from ccmux.api import tmux_registry, sanitize_session_name
@@ -69,6 +71,48 @@ from .picker import (
 from .sender import safe_edit, safe_reply, safe_send
 
 logger = logging.getLogger(__name__)
+
+
+async def _rename_topic_to_session(
+    bot: Bot, chat_id: int, thread_id: int, session_name: str
+) -> None:
+    """Rename a forum topic to match its bound session name.
+
+    Telegram's Bot API has no getter for a topic's current name, so we
+    cannot pre-check whether an edit is needed. When the topic already
+    has ``session_name``, the API returns ``BadRequest: Topic_not_modified``
+    -- a no-op, not a failure. Silence that specific response; keep the
+    warning for real failures (missing permissions, topic deleted, ...).
+    """
+    try:
+        await bot.edit_forum_topic(
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            name=session_name,
+        )
+    except BadRequest as e:
+        # Telegram spells this as ``Topic_not_modified`` (underscore) for
+        # forum topics, but ``Message is not modified`` (space) for chat
+        # messages. Normalize so either form hits the silent branch.
+        msg_norm = str(e).lower().replace("_", " ")
+        if "not modified" in msg_norm:
+            return
+        logger.warning(
+            "Failed to rename topic to %r (chat=%s thread=%s): %s",
+            session_name,
+            chat_id,
+            thread_id,
+            e,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to rename topic to %r (chat=%s thread=%s): %s",
+            session_name,
+            chat_id,
+            thread_id,
+            e,
+        )
+
 
 # State-to-clear-function mapping for stale picker cleanup
 _STATE_CLEAR_MAP: dict[str, Callable[[dict | None], None]] = {
@@ -332,21 +376,9 @@ async def _create_session_and_bind(
                 group_chat_id=chat.id,
             )
 
-            # Rename the topic to match the session name
-            try:
-                await context.bot.edit_forum_topic(
-                    chat_id=chat.id,
-                    message_thread_id=pending_thread_id,
-                    name=session_name,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to rename topic to %r (chat=%s thread=%s): %s",
-                    session_name,
-                    chat.id,
-                    pending_thread_id,
-                    e,
-                )
+            await _rename_topic_to_session(
+                context.bot, chat.id, pending_thread_id, session_name
+            )
 
             await safe_edit(
                 query,
@@ -411,15 +443,7 @@ async def _proceed_with_session(
             group_chat_id=chat.id,
         )
 
-        # Rename the topic to match the session name
-        try:
-            await context.bot.edit_forum_topic(
-                chat_id=chat.id,
-                message_thread_id=thread_id,
-                name=session_name,
-            )
-        except Exception as e:
-            logger.debug(f"Failed to rename topic: {e}")
+        await _rename_topic_to_session(context.bot, chat.id, thread_id, session_name)
 
         await safe_edit(query, f"✅ Bound to `{session_name}` ({w.window_id})")
 

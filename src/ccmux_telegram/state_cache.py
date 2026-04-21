@@ -19,8 +19,17 @@ class StateCache:
     def __init__(self) -> None:
         self._data: dict[str, ClaudeState] = {}
 
-    def update(self, instance_id: str, state: ClaudeState) -> None:
+    def update(self, instance_id: str, state: ClaudeState) -> bool:
+        """Store ``state`` for ``instance_id``; return True iff it changed.
+
+        Callers use the return value to edge-trigger side effects — the
+        backend re-emits ClaudeState every fast tick, so level-triggered
+        consumers (e.g. Telegram dispatch) would send the same payload
+        each tick and hit "message is not modified" errors.
+        """
+        prev = self._data.get(instance_id)
         self._data[instance_id] = state
+        return prev != state
 
     def get(self, instance_id: str) -> ClaudeState | None:
         return self._data.get(instance_id)

@@ -3,9 +3,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from ccmux.api import BlockedUI
+from telegram.error import BadRequest
 
 from ccmux_telegram.prompt import (
     _build_interactive_keyboard,
+    _format_blocked_content,
+    _render_mdv2,
     handle_interactive_ui,
 )
 from ccmux_telegram.callback_data import (
@@ -74,6 +78,65 @@ class TestHandleInteractiveUI:
         assert call_kwargs.kwargs["reply_markup"] is not None
 
     @pytest.mark.asyncio
+    async def test_edit_not_modified_is_treated_as_success(self, mock_bot: AsyncMock):
+        """Telegram's 'message is not modified' is a no-op success, not
+        a failure -- edge-triggered dispatch already prevents most
+        duplicates, but keep this defensive path so a stray identical
+        edit does not pop state and re-send.
+        """
+        from ccmux_telegram.prompt_state import set_interactive_msg_id
+
+        window_id = "@5"
+        user_id = 1
+        thread_id = 42
+        set_interactive_msg_id(user_id, 12345, thread_id)
+
+        mock_bot.edit_message_text.side_effect = BadRequest(
+            "Message is not modified: specified new message content"
+        )
+
+        result = await handle_interactive_ui(
+            mock_bot,
+            user_id=user_id,
+            window_id=window_id,
+            thread_id=thread_id,
+            chat_id=100,
+            ui=BlockedUI.PERMISSION_PROMPT,
+            content="Do you want to proceed?",
+        )
+
+        assert result is True
+        mock_bot.edit_message_text.assert_called_once()
+        mock_bot.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_edit_other_bad_request_falls_back_to_send(self, mock_bot: AsyncMock):
+        """A BadRequest that is NOT 'not modified' should still pop state
+        and fall back to a fresh send."""
+        from ccmux_telegram.prompt_state import set_interactive_msg_id
+
+        window_id = "@5"
+        user_id = 1
+        thread_id = 42
+        set_interactive_msg_id(user_id, 12345, thread_id)
+
+        mock_bot.edit_message_text.side_effect = BadRequest("Message to edit not found")
+
+        result = await handle_interactive_ui(
+            mock_bot,
+            user_id=user_id,
+            window_id=window_id,
+            thread_id=thread_id,
+            chat_id=100,
+            ui=BlockedUI.PERMISSION_PROMPT,
+            content="Do you want to proceed?",
+        )
+
+        assert result is True
+        mock_bot.edit_message_text.assert_called_once()
+        mock_bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_handle_no_ui_returns_false(self, mock_bot: AsyncMock):
         """Returns False when no interactive UI detected in pane."""
         window_id = "@5"
@@ -96,6 +159,125 @@ class TestHandleInteractiveUI:
 
         assert result is False
         mock_bot.send_message.assert_not_called()
+
+
+class TestFormatBlockedContent:
+    """Heuristic Markdown styling for extracted pane content.
+
+    Leading whitespace stays outside the markers so ``** x**`` (with a
+    space after the opening ``**``) is never produced — Markdown would
+    not recognize that as bold.
+    """
+
+    def test_first_nonblank_line_is_bold(self):
+        result = _format_blocked_content("Read file\n\n  Read(/etc/hosts)\n")
+        assert result.startswith("**Read file**")
+
+    def test_leading_indent_stays_outside_bold(self):
+        """Bold markers must hug the text, never the whitespace."""
+        result = _format_blocked_content(" Read file\n")
+        # Preferred: " **Read file**" — indent survives, markers wrap text.
+        assert result.startswith(" **Read file**")
+        # Never the broken form where the opening ** has a trailing space.
+        assert not result.startswith("** ")
+
+    def test_question_line_is_bold(self):
+        text = "Read file\n\n  Read(/foo)\n\n Do you want to proceed?\n"
+        result = _format_blocked_content(text)
+        assert "**Read file**" in result
+        assert " **Do you want to proceed?**" in result
+
+    def test_selected_option_is_bold(self):
+        text = "Pick one\n\n ❯ 1. Yes, default\n   2. No, cancel\n Esc to cancel\n"
+        result = _format_blocked_content(text)
+        assert " **❯ 1. Yes, default**" in result
+        # Unselected option stays plain.
+        assert "\n   2. No, cancel\n" in result
+
+    def test_footer_is_italic(self):
+        text = "Read file\n\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend\n"
+        result = _format_blocked_content(text)
+        assert " _Esc to cancel · Tab to amend_" in result
+
+    def test_enter_to_footer_is_italic(self):
+        text = "Enable auto mode?\n\n ❯ 1. Yes\n   2. No\n\n Enter to confirm · Esc to cancel\n"
+        result = _format_blocked_content(text)
+        assert " _Enter to confirm · Esc to cancel_" in result
+
+    def test_plain_lines_stay_plain(self):
+        """Lines that are neither title, question, selected option, nor
+        footer must not gain any markdown markers."""
+        text = "Read file\n\n  Read(/etc/hosts)\n  — allow reading from etc/\n"
+        result = _format_blocked_content(text)
+        # The tool-call line and description line are not decorated.
+        assert "  Read(/etc/hosts)\n  — allow reading from etc/" in result
+        # But the title line is still bolded.
+        assert "**Read file**" in result
+
+
+class TestRenderMdV2:
+    """Minimal Markdown → MarkdownV2 translator.
+
+    We bypass the full ``convert_markdown`` pipeline because its
+    mistletoe parser (1) rewrites ``1. Yes`` / ``2. No`` numbered lines
+    as an ordered list, collapsing indentation, and (2) does not accept
+    ``** x**`` as bold. Those are routine shapes for Claude's blocking
+    UIs, so we roll our own.
+    """
+
+    def test_double_asterisk_bold_to_single_asterisk(self):
+        assert _render_mdv2("**Read file**") == "*Read file*"
+
+    def test_underscore_italic_stays(self):
+        assert _render_mdv2("_Esc to cancel_") == "_Esc to cancel_"
+
+    def test_escapes_mdv2_special_outside_markers(self):
+        # `(`, `)`, `.` all require backslash escape in MDV2 literals.
+        assert _render_mdv2("Read(/etc/hosts)") == "Read\\(/etc/hosts\\)"
+        assert _render_mdv2("1. Yes") == "1\\. Yes"
+
+    def test_escapes_inside_bold_markers(self):
+        # Literals inside bold still need escape — Telegram parses
+        # `*1. Yes*` as bold containing an unescaped `.`, which rejects
+        # the whole message.
+        assert _render_mdv2("**1. Yes**") == "*1\\. Yes*"
+
+    def test_preserves_leading_whitespace(self):
+        # mistletoe collapses leading spaces for ordered-list lines; our
+        # renderer must not.
+        assert _render_mdv2("   2. No") == "   2\\. No"
+
+    def test_unterminated_marker_is_literal(self):
+        # A stray `**` with no closing pair should be escaped, not
+        # consumed — prevents truncated bold from swallowing the rest
+        # of the message.
+        out = _render_mdv2("hello **world")
+        assert out == "hello \\*\\*world"
+
+    def test_full_permission_prompt_pipeline(self):
+        """End-to-end: raw pane content → styled Markdown → MDV2."""
+        raw = (
+            " Read file\n"
+            "\n"
+            "  Read(/etc/hosts)\n"
+            "\n"
+            " Do you want to proceed?\n"
+            " ❯ 1. Yes\n"
+            "   2. No\n"
+            "\n"
+            " Esc to cancel · Tab to amend\n"
+        )
+        out = _render_mdv2(_format_blocked_content(raw))
+        # Bold title / question / selected option.
+        assert " *Read file*" in out
+        assert " *Do you want to proceed?*" in out
+        assert " *❯ 1\\. Yes*" in out
+        # Italic footer.
+        assert " _Esc to cancel · Tab to amend_" in out
+        # Tool call line: not bolded, parens escaped.
+        assert "  Read\\(/etc/hosts\\)" in out
+        # Unselected option: plain, with its indent intact and `.` escaped.
+        assert "   2\\. No" in out
 
 
 class TestKeyboardLayoutForSettings:

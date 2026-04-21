@@ -14,11 +14,12 @@ Provides:
 
 import asyncio
 import logging
+import re
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from . import tool_context
 from .runtime import get_topic
 from ccmux.api import BlockedUI, extract_interactive_content, tmux_registry
 from .util import get_thread_id, get_tm_and_window
@@ -33,7 +34,7 @@ from .callback_data import (
     CB_ASK_TAB,
     CB_ASK_UP,
 )
-from .sender import NO_LINK_PREVIEW
+from .sender import NO_LINK_PREVIEW, PARSE_MODE
 from .prompt_state import (
     get_interactive_msg_id,
     pop_interactive_state,
@@ -42,6 +43,125 @@ from .prompt_state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Footer lines that Claude renders at the bottom of a blocking UI —
+# styled as italic so the directional/action hint visually recedes
+# below the actionable content.
+_FOOTER_HINT_RE = re.compile(r"^\s*(Esc to |Enter to )")
+# The caret that marks the currently-selected option; bold the full
+# line so Telegram users see their next-press target at a glance.
+_SELECTED_OPTION_RE = re.compile(r"^\s*❯\s+")
+
+
+def _format_blocked_content(text: str) -> str:
+    """Apply heuristic Markdown to raw pane content.
+
+    Returns plain Markdown that :func:`_render_mdv2` will translate to
+    Telegram MarkdownV2. Leading whitespace stays *outside* the markers
+    because Markdown does not recognize ``** x**`` (a space right after
+    the opening ``**``) as bold.
+
+    Rules, line-by-line:
+
+    - The first non-empty line is the tool title or the question
+      (``Read file``, ``Bash command``, ``Enable auto mode?``, ``Do you
+      want to proceed?``). Bold it.
+    - Any subsequent line ending with ``?`` is also a question header
+      (e.g. ``Do you want to proceed?`` inside a tool-preview block).
+      Bold.
+    - Lines starting with ``❯`` are the currently-selected option.
+      Bold the whole line.
+    - Lines starting with ``Esc to `` / ``Enter to `` are the footer
+      hint bar. Render italic.
+
+    Heuristics only — we do not parse structure. The rules are chosen to
+    be safe when they miss (a plain-text line stays plain text).
+    """
+    lines = text.split("\n")
+    styled: list[str] = []
+    first_nonblank_done = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            styled.append(line)
+            continue
+
+        indent_len = len(line) - len(line.lstrip())
+        indent = line[:indent_len]
+        body = line[indent_len:].rstrip()
+
+        if not first_nonblank_done:
+            styled.append(f"{indent}**{body}**")
+            first_nonblank_done = True
+            continue
+
+        if _SELECTED_OPTION_RE.match(line):
+            styled.append(f"{indent}**{body}**")
+            continue
+
+        if _FOOTER_HINT_RE.match(line):
+            styled.append(f"{indent}_{body}_")
+            continue
+
+        if stripped.endswith("?"):
+            styled.append(f"{indent}**{body}**")
+            continue
+
+        styled.append(line)
+    return "\n".join(styled)
+
+
+# MarkdownV2 escaping — Telegram requires these characters to be
+# backslash-prefixed when they appear as literal text inside a message:
+#   _ * [ ] ( ) ~ ` > # + - = | { } . ! \
+_MDV2_SPECIAL = set("_*[]()~`>#+-=|{}.!\\")
+
+
+def _escape_mdv2_chunk(s: str) -> str:
+    """Escape every MarkdownV2 special char inside a literal chunk."""
+    return "".join("\\" + c if c in _MDV2_SPECIAL else c for c in s)
+
+
+def _render_mdv2(text: str) -> str:
+    """Translate our limited Markdown to Telegram MarkdownV2.
+
+    Handles only ``**bold**`` and ``_italic_`` pairs; everything else is
+    escaped as literal. We bypass the full ``convert_markdown`` pipeline
+    because its mistletoe parser rewrites ordered-list indentation
+    (``1. Yes`` / ``2. No``) and rejects ``** x**`` bold with a space
+    after the opening marker — both common in Claude's blocking UIs.
+    """
+    out: list[str] = []
+    out_lines: list[str] = []
+    for line in text.split("\n"):
+        i = 0
+        line_out: list[str] = []
+        while i < len(line):
+            if line[i : i + 2] == "**":
+                end = line.find("**", i + 2)
+                if end != -1:
+                    body = line[i + 2 : end]
+                    line_out.append("*")
+                    line_out.append(_escape_mdv2_chunk(body))
+                    line_out.append("*")
+                    i = end + 2
+                    continue
+            if line[i] == "_":
+                end = line.find("_", i + 1)
+                if end != -1:
+                    body = line[i + 1 : end]
+                    line_out.append("_")
+                    line_out.append(_escape_mdv2_chunk(body))
+                    line_out.append("_")
+                    i = end + 1
+                    continue
+            c = line[i]
+            line_out.append("\\" + c if c in _MDV2_SPECIAL else c)
+            i += 1
+        out_lines.append("".join(line_out))
+    out.append("\n".join(out_lines))
+    return "".join(out)
 
 
 def _build_interactive_keyboard(
@@ -163,12 +283,11 @@ async def handle_interactive_ui(
     # Build message with navigation keyboard.
     keyboard = _build_interactive_keyboard(window_id, ui_name=ui_name)
 
-    # Prepend cached tool_context (Edit diff, Bash command, etc.).
-    cached = tool_context.get_pending(window_id)
-    if cached is not None:
-        header = tool_context.format_input_for_ui(cached.tool_name, cached.input)
-        if header:
-            text = f"{header}\n\n{text}"
+    # The extracted content already carries the tool-preview block from
+    # the pane (Claude renders `<Tool name>\n<Tool call>\n\nDo you want
+    # to proceed?` as a single region, which the parser's walkback
+    # captures). No JSONL lookup needed — see drop-tool-context.
+    rendered_text = _render_mdv2(_format_blocked_content(text))
 
     thread_kwargs: dict[str, int] = {}
     if thread_id is not None:
@@ -180,12 +299,26 @@ async def handle_interactive_ui(
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=existing_msg_id,
-                text=text,
+                text=rendered_text,
                 reply_markup=keyboard,
+                parse_mode=PARSE_MODE,
                 link_preview_options=NO_LINK_PREVIEW,
             )
             set_interactive_mode(user_id, window_id, thread_id)
             return True
+        except BadRequest as e:
+            # "message is not modified" means the payload is identical
+            # to what's already on Telegram -- a no-op success, not a
+            # failure. Don't pop state or re-send; that would spam.
+            if "not modified" in str(e).lower():
+                set_interactive_mode(user_id, window_id, thread_id)
+                return True
+            logger.debug(
+                "Edit failed for interactive msg %s (%s), sending new",
+                existing_msg_id,
+                e,
+            )
+            pop_interactive_state(user_id, thread_id)
         except Exception:
             logger.debug(
                 "Edit failed for interactive msg %s, sending new", existing_msg_id
@@ -198,8 +331,9 @@ async def handle_interactive_ui(
     try:
         sent = await bot.send_message(
             chat_id=chat_id,
-            text=text,
+            text=rendered_text,
             reply_markup=keyboard,
+            parse_mode=PARSE_MODE,
             link_preview_options=NO_LINK_PREVIEW,
             **thread_kwargs,  # type: ignore[arg-type]
         )

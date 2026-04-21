@@ -213,3 +213,77 @@ class TestDead:
         await on_state("alpha", Dead(), bot=_FakeBot())
 
         assert calls == [(1, "@7", "Resuming session\u2026")]
+
+
+class TestEdgeTriggeredDispatch:
+    """on_state only dispatches when the observed state actually changed.
+
+    Backend re-emits ClaudeState every fast tick; level-triggered
+    dispatch would spam identical Telegram payloads and trip Telegram's
+    "message is not modified" rejection.
+    """
+
+    @pytest.mark.asyncio
+    async def test_repeat_same_state_dispatches_once(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        calls: list[tuple] = []
+
+        async def fake_enqueue(
+            bot, user_id, window_id, text, *, thread_id=None, chat_id=None
+        ):
+            calls.append((user_id, text))
+
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.enqueue_status_update", fake_enqueue
+        )
+
+        state = Working(status_text="Reading\u2026")
+        await on_state("alpha", state, bot=_FakeBot())
+        await on_state("alpha", state, bot=_FakeBot())
+        await on_state("alpha", state, bot=_FakeBot())
+
+        assert calls == [(1, "Reading\u2026")]
+
+    @pytest.mark.asyncio
+    async def test_changed_state_dispatches_again(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        calls: list[tuple] = []
+
+        async def fake_enqueue(
+            bot, user_id, window_id, text, *, thread_id=None, chat_id=None
+        ):
+            calls.append((user_id, text))
+
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.enqueue_status_update", fake_enqueue
+        )
+
+        await on_state("alpha", Working(status_text="Reading\u2026"), bot=_FakeBot())
+        await on_state("alpha", Working(status_text="Writing\u2026"), bot=_FakeBot())
+
+        assert calls == [(1, "Reading\u2026"), (1, "Writing\u2026")]
+
+    @pytest.mark.asyncio
+    async def test_watcher_receives_every_observation(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        """Watcher must see every tick, not just state changes -- its
+        dashboard needs the full observation stream."""
+        observed: list[tuple] = []
+
+        class _FakeService:
+            def process(self, instance_id, state, *, topic):
+                observed.append((instance_id, state))
+
+        monkeypatch.setattr(
+            "ccmux_telegram.watcher.get_service", lambda: _FakeService()
+        )
+
+        state = Idle()
+        await on_state("alpha", state, bot=_FakeBot())
+        await on_state("alpha", state, bot=_FakeBot())
+        await on_state("alpha", state, bot=_FakeBot())
+
+        assert len(observed) == 3
