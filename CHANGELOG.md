@@ -6,6 +6,53 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 2.3.0 — 2026-04-21
+
+### Added
+
+- `message_dispatch.dispatch_text` gates every user-to-Claude-Code
+  text send on the destination window's last observed `ClaudeState`:
+  - `Idle` (or no observation yet) sends through immediately.
+  - `Working` / `Blocked` buffers the message in an in-memory
+    per-window FIFO and applies a 🤔 reaction to the originating
+    Telegram message.
+  - `Dead` rejects with a user-visible error.
+- `status_line.on_state`'s `Idle` branch now drains every pending
+  message for the transitioning window, in FIFO order. Delivered
+  messages get a 👤 reaction so the user can see at a glance what
+  went through.
+- All four `send_text` call sites in `message_out.py` (text, photo,
+  voice transcript, `/cc` slash command) route through the new
+  `dispatch_text`. Navigation keys in `prompt.py` (Up / Down / Enter
+  / Escape responses to Blocked UIs) stay on the direct send_keys
+  path — they ARE the Blocked response, not new turn content.
+
+### Fixed
+
+- Root cause of the duplicated spinner "stair-step" regression:
+  when CC was mid-turn and the user sent a new message, send_keys
+  would expand CC's input area vertically, overflow
+  `parse_status_line`'s chrome-search window, and flip the bot's
+  detected state to Idle. The old status message got deleted and
+  republished on the next poll, repeating. Gating at the source
+  keeps the input single-line during Working, so the spinner stays
+  anchored and state detection stays stable.
+
+### Removed
+
+- The v2.1.2 "Message is not modified" except-path in
+  `_queue_status.py`. That was a symptomatic fix for the same
+  underlying bug; with gated dispatch the preconditions that
+  produce identical rapid-fire status texts no longer occur. The
+  original fallback (retry plain-text, then post-new on second
+  failure) is back in effect.
+
+### Changed
+
+- `ccmux` dependency bumped to `>=2.5.0,<3.0.0` (was `>=2.5.0` via
+  2.2.0; no effective change, but reaffirmed — dispatch leans on
+  the raw-pane shape that 2.5.0 introduced).
+
 ## 2.2.0 — 2026-04-21
 
 ### Added

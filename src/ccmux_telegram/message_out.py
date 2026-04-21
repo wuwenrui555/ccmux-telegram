@@ -23,12 +23,10 @@ from telegram.ext import ContextTypes
 from .config import config
 from .util import authorized, ccmux_dir, get_thread_id, get_tm_and_window
 from .runtime import get_topic, topics as _topics
-from ccmux.api import (
-    extract_interactive_content,
-    get_default_backend,
-)
+from ccmux.api import extract_interactive_content
 from .bash_capture import cancel_bash_capture, start_bash_capture
 from .binding_flow import handle_text_in_picker_state, handle_unbound_topic
+from .message_dispatch import dispatch_text
 from .prompt import handle_interactive_ui
 from .sender import safe_reply
 from .prompt_state import get_interactive_window
@@ -212,7 +210,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # Small delay to let UI render in Telegram before text arrives
         await asyncio.sleep(0.3)
 
-    success, message = await get_default_backend().tmux.send_text(wid, text)
+    success, message = await dispatch_text(
+        bot=context.bot,
+        chat_id=topic.group_chat_id,
+        message_id=update.message.message_id,
+        window_id=wid,
+        text=text,
+    )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
         return
@@ -310,7 +314,13 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.chat.send_action(ChatAction.TYPING)
     clear_status_msg_info(user.id, thread_id)
 
-    success, message = await get_default_backend().tmux.send_text(wid, text_to_send)
+    success, message = await dispatch_text(
+        bot=context.bot,
+        chat_id=topic.group_chat_id,
+        message_id=update.message.message_id,
+        window_id=wid,
+        text=text_to_send,
+    )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
         return
@@ -402,7 +412,13 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.chat.send_action(ChatAction.TYPING)
     clear_status_msg_info(user.id, thread_id)
 
-    success, message = await get_default_backend().tmux.send_text(wid, text)
+    success, message = await dispatch_text(
+        bot=context.bot,
+        chat_id=topic.group_chat_id,
+        message_id=update.message.message_id,
+        window_id=wid,
+        text=text,
+    )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
         return
@@ -458,7 +474,13 @@ async def forward_command_handler(
         "Forwarding command %s to session %s (user=%d)", cc_slash, display, user.id
     )
     await update.message.chat.send_action(ChatAction.TYPING)
-    success, message = await get_default_backend().tmux.send_text(wid, cc_slash)
+    success, message = await dispatch_text(
+        bot=context.bot,
+        chat_id=topic.group_chat_id,
+        message_id=update.message.message_id,
+        window_id=wid,
+        text=cc_slash,
+    )
     if success:
         await safe_reply(update.message, f"⚡ [{display}] Sent: {cc_slash}")
         # Interactive commands (e.g. /model) render a terminal-based UI
