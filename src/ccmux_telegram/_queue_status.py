@@ -80,19 +80,7 @@ async def _process_status_update_task(
                 _mq._status_msg_info[skey] = (msg_id, wid, status_text)
             except RetryAfter:
                 raise
-            except Exception as e:
-                # Telegram returns "Message is not modified" when the edit's
-                # rendered content is byte-identical to what's already on
-                # screen (e.g. when two poll ticks produce the same status
-                # text). Treat as a successful no-op: cache the text so the
-                # next tick's `status_text == last_text` shortcut catches it
-                # and never call send/delete again. Falling through to the
-                # plain-text retry or to `_do_send_status_message` would
-                # either hit the same error or, worse, drop the old message
-                # and post a duplicate.
-                if "Message is not modified" in str(e):
-                    _mq._status_msg_info[skey] = (msg_id, wid, status_text)
-                    return
+            except Exception:
                 try:
                     await bot.edit_message_text(
                         chat_id=chat_id,
@@ -103,11 +91,8 @@ async def _process_status_update_task(
                     _mq._status_msg_info[skey] = (msg_id, wid, status_text)
                 except RetryAfter:
                     raise
-                except Exception as e2:
-                    if "Message is not modified" in str(e2):
-                        _mq._status_msg_info[skey] = (msg_id, wid, status_text)
-                        return
-                    logger.debug(f"Failed to edit status message: {e2}")
+                except Exception as e:
+                    logger.debug(f"Failed to edit status message: {e}")
                     _mq._status_msg_info.pop(skey, None)
                     await _do_send_status_message(
                         bot, user_id, tid, wid, status_text, chat_id=chat_id

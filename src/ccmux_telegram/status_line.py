@@ -122,6 +122,12 @@ async def _dispatch(
             # Clear any dangling interactive message bound to this instance.
             if get_interactive_window(user_id, thread_id) == window_id:
                 await clear_interactive_msg(user_id, bot, thread_id, chat_id=chat_id)
+            # Flush any user messages buffered while this instance was
+            # Working / Blocked. The buffer is per-window and FIFO.
+            if window_id:
+                from .message_dispatch import drain_for_window
+
+                await drain_for_window(bot, window_id)
 
         case Blocked(ui=ui, content=content):
             await handle_interactive_ui(

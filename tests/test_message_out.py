@@ -46,7 +46,7 @@ class TestForwardCommand:
             patch(f"{_MOD}.get_topic") as mock_get_topic,
             patch(f"{_MOD}._topics") as mock_topics,
             patch(f"{_MOD}.get_tm_and_window", new_callable=AsyncMock) as mock_gtw,
-            patch(f"{_MOD}.get_default_backend") as mock_get_backend,
+            patch(f"{_MOD}.dispatch_text", new_callable=AsyncMock) as mock_dispatch,
             patch(f"{_MOD}.safe_reply", new_callable=AsyncMock),
         ):
             mock_tm = MagicMock()
@@ -56,18 +56,18 @@ class TestForwardCommand:
             mock_binding = MagicMock()
             mock_binding.window_id = "@5"
             mock_binding.session_name = "project"
+            mock_binding.group_chat_id = 1000
             mock_get_topic.return_value = mock_binding
             mock_topics.is_alive.return_value = True
-            mock_backend = MagicMock()
-            mock_backend.tmux = MagicMock()
-            mock_backend.tmux.send_text = AsyncMock(return_value=(True, "ok"))
-            mock_get_backend.return_value = mock_backend
+            mock_dispatch.return_value = (True, "")
 
             from ccmux_telegram.message_out import forward_command_handler
 
             await forward_command_handler(update, context)
 
-            mock_backend.tmux.send_text.assert_called_once_with("@5", "/model")
+            mock_dispatch.assert_called_once()
+            assert mock_dispatch.call_args.kwargs["window_id"] == "@5"
+            assert mock_dispatch.call_args.kwargs["text"] == "/model"
 
     @pytest.mark.asyncio
     async def test_cost_sends_command_to_tmux(self):
@@ -81,7 +81,7 @@ class TestForwardCommand:
             patch(f"{_MOD}.get_topic") as mock_get_topic,
             patch(f"{_MOD}._topics") as mock_topics,
             patch(f"{_MOD}.get_tm_and_window", new_callable=AsyncMock) as mock_gtw,
-            patch(f"{_MOD}.get_default_backend") as mock_get_backend,
+            patch(f"{_MOD}.dispatch_text", new_callable=AsyncMock) as mock_dispatch,
             patch(f"{_MOD}.safe_reply", new_callable=AsyncMock),
         ):
             mock_tm = MagicMock()
@@ -91,18 +91,18 @@ class TestForwardCommand:
             mock_binding = MagicMock()
             mock_binding.window_id = "@5"
             mock_binding.session_name = "project"
+            mock_binding.group_chat_id = 1000
             mock_get_topic.return_value = mock_binding
             mock_topics.is_alive.return_value = True
-            mock_backend = MagicMock()
-            mock_backend.tmux = MagicMock()
-            mock_backend.tmux.send_text = AsyncMock(return_value=(True, "ok"))
-            mock_get_backend.return_value = mock_backend
+            mock_dispatch.return_value = (True, "")
 
             from ccmux_telegram.message_out import forward_command_handler
 
             await forward_command_handler(update, context)
 
-            mock_backend.tmux.send_text.assert_called_once_with("@5", "/cost")
+            mock_dispatch.assert_called_once()
+            assert mock_dispatch.call_args.kwargs["window_id"] == "@5"
+            assert mock_dispatch.call_args.kwargs["text"] == "/cost"
 
     @pytest.mark.asyncio
     async def test_clear_sends_command_to_tmux(self):
@@ -116,7 +116,7 @@ class TestForwardCommand:
             patch(f"{_MOD}.get_topic") as mock_get_topic,
             patch(f"{_MOD}._topics") as mock_topics,
             patch(f"{_MOD}.get_tm_and_window", new_callable=AsyncMock) as mock_gtw,
-            patch(f"{_MOD}.get_default_backend") as mock_get_backend,
+            patch(f"{_MOD}.dispatch_text", new_callable=AsyncMock) as mock_dispatch,
             patch(f"{_MOD}.safe_reply", new_callable=AsyncMock),
         ):
             mock_tm = MagicMock()
@@ -126,15 +126,15 @@ class TestForwardCommand:
             mock_binding = MagicMock()
             mock_binding.window_id = "@5"
             mock_binding.session_name = "project"
+            mock_binding.group_chat_id = 1000
             mock_get_topic.return_value = mock_binding
             mock_topics.is_alive.return_value = True
-            mock_backend = MagicMock()
-            mock_backend.tmux = MagicMock()
-            mock_backend.tmux.send_text = AsyncMock(return_value=(True, "ok"))
-            mock_get_backend.return_value = mock_backend
+            mock_dispatch.return_value = (True, "")
 
             from ccmux_telegram.message_out import forward_command_handler
 
             await forward_command_handler(update, context)
 
-            mock_backend.tmux.send_text.assert_called_once_with("@5", "/clear")
+            mock_dispatch.assert_called_once()
+            assert mock_dispatch.call_args.kwargs["window_id"] == "@5"
+            assert mock_dispatch.call_args.kwargs["text"] == "/clear"
