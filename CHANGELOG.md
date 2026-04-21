@@ -6,6 +6,76 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 2.1.0 — 2026-04-21
+
+### Added
+
+- Blocked-UI messages are now styled with Telegram MarkdownV2. The
+  first non-empty line (tool title / question) and any selected
+  option (`❯ 1. Yes`) render bold; the `Esc to …` / `Enter to …`
+  footer renders italic. Implemented with a minimal in-house
+  Markdown → MarkdownV2 translator (`_render_mdv2`) that preserves
+  leading whitespace and does not re-flow numbered-option lines as
+  an ordered list the way `convert_markdown` does.
+- `/start` in an *unbound* forum topic now routes through
+  `handle_unbound_topic` and shows the tmux-session picker directly,
+  matching the behavior of sending any plain-text message.
+- `/start` in a *bound* forum topic now shows the bound session name
+  and the three commands most likely useful next:
+
+      ✅ Bound to `<session_name>`.
+
+      /rebind — switch to another session
+      /history — view past messages
+      /unbind — remove this binding
+
+  Replaces the generic "Create a new topic to start" welcome which
+  was misleading inside an already-bound topic.
+- `/history` and `send_history` now log at info level — every
+  invocation records user / thread / message count so live regressions
+  can be diagnosed from `~/.ccmux/ccmux.log` without re-running the
+  command.
+
+### Changed
+
+- Requires `ccmux>=2.1.0` (was `>=2.0.0`). The 2.1 backend's
+  parser walkback is what carries the tool-preview block into the
+  pane content that this frontend renders.
+- `StateCache.update()` now returns whether the observed state
+  actually changed. `status_line.on_state` uses that return value
+  to edge-trigger Telegram dispatch: identical consecutive states
+  no longer produce redundant edit/send calls. The watcher still
+  receives every observation.
+- `handle_interactive_ui` distinguishes Telegram's "message is not
+  modified" BadRequest as a no-op success rather than a failure.
+  Same treatment applied to `binding_flow` topic renames
+  (`Topic_not_modified` when the topic already has the target name).
+
+### Fixed
+
+- Interactive-msg lifecycle race: `handle_new_message` used to
+  unconditionally call `clear_interactive_msg` on any non-PROMPT
+  `tool_use` ClaudeMessage. Claude Code 2.1.x emits these while the
+  permission UI is still on the pane, so state_monitor's freshly
+  sent Blocked message was wiped ~1 ms after delivery. State_monitor
+  is now the single owner of the interactive-msg lifecycle.
+- Topic rename no longer logs a warning when Telegram replies
+  `Topic_not_modified` (the topic already has the target name).
+  Real failures (permissions, topic deleted) still warn.
+
+### Removed
+
+- `tool_context.py` and its call sites in `message_in` and `prompt`.
+  The module's only job was reading JSONL to prepend a rich tool
+  header to permission prompts; Claude Code 2.1.x does not flush
+  `tool_use` to JSONL until the turn completes (i.e. only after
+  approval), so `get_pending` always returned `None` during the
+  permission UI's lifetime. The pane walkback in ccmux-backend
+  2.1.0 replaces this with a working equivalent.
+- Associated tests (`tests/test_tool_context.py`,
+  `tests/test_prompt_context_injection.py`, and
+  `TestToolContextWiring` in `tests/test_message_in_skill_filter.py`).
+
 ## 2.0.0 — 2026-04-20
 
 ### Changed
