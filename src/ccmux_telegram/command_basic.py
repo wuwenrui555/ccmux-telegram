@@ -29,15 +29,35 @@ logger = logging.getLogger(__name__)
 
 @authorized(notify=True)
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show welcome message."""
+    """Show welcome message, or trigger the binding picker.
+
+    ``/start`` is the Telegram-conventional first command. In an unbound
+    forum topic the same flow that plain-text messages trigger is what
+    the user expects, so route through :func:`handle_unbound_topic` and
+    show the tmux-session picker directly. In already-bound topics (and
+    the no-thread private chat) keep the welcome text.
+    """
     clear_browse_state(context.user_data)
 
-    if update.message:
-        await safe_reply(
-            update.message,
-            "🤖 *Claude Code Monitor*\n\n"
-            "Each topic is a session. Create a new topic to start.",
-        )
+    if not update.message:
+        return
+
+    user = update.effective_user
+    thread_id = get_thread_id(update)
+    topic = get_topic(user.id, thread_id) if user and thread_id is not None else None
+
+    if user is not None and thread_id is not None and topic is None:
+        # Lazy import to avoid circular (binding_flow -> command_basic).
+        from .binding_flow import handle_unbound_topic
+
+        await handle_unbound_topic(update, context, user, thread_id, text="")
+        return
+
+    await safe_reply(
+        update.message,
+        "🤖 *Claude Code Monitor*\n\n"
+        "Each topic is a session. Create a new topic to start.",
+    )
 
 
 @authorized()
