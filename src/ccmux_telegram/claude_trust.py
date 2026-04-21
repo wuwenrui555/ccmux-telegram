@@ -55,9 +55,7 @@ def mark_dir_trusted(dir_path: str | Path) -> bool:
 
     projects = data.setdefault("projects", {})
     if not isinstance(projects, dict):
-        logger.warning(
-            "%s.projects is not an object; refusing to modify", _CLAUDE_JSON
-        )
+        logger.warning("%s.projects is not an object; refusing to modify", _CLAUDE_JSON)
         return False
 
     entry = projects.setdefault(abspath, {})

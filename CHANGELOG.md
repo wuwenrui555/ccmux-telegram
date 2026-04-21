@@ -6,6 +6,15 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 1.2.1 — 2026-04-20
+
+### Changed
+
+- Apply `ruff format` across `src/` and `tests/`. v1.2.0 landed on
+  `main` with 3 files flagged by the CI `ruff format --check` step;
+  this hotfix reformats them so CI on `main` is green again. No
+  behaviour change.
+
 ## 1.2.0 — 2026-04-20
 
 ### Added
