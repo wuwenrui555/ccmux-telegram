@@ -243,16 +243,19 @@ class TopicBindings:
     # ------------------------------------------------------------------
 
     def is_alive(self, topic: TopicBinding) -> bool:
-        """Delegate to the backend's window-keyed liveness verdict.
+        """True iff the bound instance has observed state != Dead.
 
-        Pending bindings (no window_id yet) are treated as alive — the
-        picker hasn't selected a window, so there's nothing to verify.
+        An instance that was never observed returns False (treat
+        unobserved as not-alive; if the bot just started and there is no
+        state yet, consumer code treats that as 'not ready to receive').
+        Pending bindings (no window_id) keep the 'alive-until-proven-dead'
+        semantics they had in v1.x to preserve the binding-picker UX.
         """
         if not topic.window_id:
-            return True
-        from .runtime import is_window_alive
+            return True  # pending binding — no instance observed yet
+        from .state_cache import get_state_cache
 
-        return is_window_alive(topic.window_id)
+        return get_state_cache().is_alive(topic.session_name)
 
     # ------------------------------------------------------------------
     # Watcher registration (group-topic dashboard)

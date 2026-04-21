@@ -113,20 +113,10 @@ async def get_tm_and_window(window_id: str):
     return tm, w
 
 
-def has_window_binding(window_id: str, session_name: str) -> bool:
-    """Check if the backend's window_bindings.json has a populated entry for this session.
-
-    Reads from the path exposed by `ccmux.config.config.bindings_file`
-    (default `~/.ccmux/window_bindings.json`).
+def has_window_binding(session_name: str) -> bool:
+    """True iff the backend registry currently holds a complete instance
+    for ``session_name`` (both window_id and session_id populated).
     """
-    from ccmux.config import config as backend_config
+    from .runtime import windows
 
-    del window_id  # kept for API compatibility
-    if not backend_config.bindings_file.exists():
-        return False
-    try:
-        bindings = json.loads(backend_config.bindings_file.read_text())
-        info = bindings.get(session_name, {})
-        return bool(info.get("session_id"))
-    except (json.JSONDecodeError, OSError):
-        return False
+    return windows.contains(session_name)

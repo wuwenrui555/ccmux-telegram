@@ -6,6 +6,40 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 2.0.0 — 2026-04-20
+
+### Changed
+
+- Upgraded to ccmux-backend v2.0.0 (required; v1.x is incompatible).
+- Consumers migrated to the new `on_state` / `on_message` dual
+  callback:
+  - `status_line.consume_statuses` replaced by
+    `status_line.on_state(instance_id, ClaudeState, *, bot=)`.
+  - `watcher.classify` now takes a `ClaudeState` and returns
+    `working | waiting | resuming`.
+  - `topic_bindings.is_alive` reads from the new frontend-side
+    `StateCache` instead of `backend.is_alive`.
+- `tool_context._resolve_jsonl_path` uses the new
+  `ClaudeInstanceRegistry.get_by_window_id` lookup.
+- `bot.py::post_init` invokes `backend.start(on_state=..., on_message=...)`.
+- Renames carried over from the backend:
+  `WindowBinding` → `ClaudeInstance`,
+  `WindowBindings` → `ClaudeInstanceRegistry`,
+  `claude_session_id` → `session_id` field.
+
+### Removed
+
+- Every reference to `WindowStatus`, the old `PaneState` StrEnum,
+  `WindowBinding`, `WindowBindings`, `Backend.is_alive`,
+  `Backend.get_window_binding`, and the two-callback
+  `start(on_message, on_status)` signature.
+
+### Note on persistence
+
+ccmux-backend changes `$CCMUX_DIR/window_bindings.json` to
+`$CCMUX_DIR/claude_instances.json` with no migration. After upgrading,
+existing users must re-bind their Claude sessions.
+
 ## 1.2.1 — 2026-04-20
 
 ### Changed
@@ -102,12 +136,12 @@ First stable release, paired with `ccmux` 1.0.0.
 - `ccmux-telegram.markdown` no longer relies on
   `TranscriptParser.EXPANDABLE_QUOTE_*` sentinel tokens (removed in
   backend v1.0). Collapsible regions are detected from **standard
-  Markdown blockquotes** (`> ` lines) emitted by the backend and
+  Markdown blockquotes** (`>` lines) emitted by the backend and
   rendered as Telegram expandable blockquotes (`**>…||`). Code fences
   are respected — `>` inside a fenced block is not treated as a
   blockquote.
 - `sender.strip_sentinels` removed. Plain-text fallback no longer needs
-  post-processing; the backend's `> ` output is already human-readable.
+  post-processing; the backend's `>` output is already human-readable.
 - `message_in.py` replaces sentinel-based atomicity checks with
   blockquote detection (`_is_blockquote_only` / `_strip_blockquote` /
   `_as_blockquote`).

@@ -69,12 +69,12 @@ async def send_history(
 
     from ccmux.api import get_default_backend
 
-    window = _windows.get(topic.window_id)
-    if window is None or not window.claude_session_id:
+    instance = _windows.get(topic.session_name)
+    if instance is None or not instance.session_id:
         messages: list[dict] = []
     else:
         messages = await get_default_backend().claude.get_history(
-            window.claude_session_id,
+            instance.session_id,
             start_byte=start_byte,
             end_byte=end_byte if end_byte > 0 else None,
         )

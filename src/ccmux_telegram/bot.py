@@ -41,7 +41,7 @@ from .message_out import (
 )
 from .voice_transcribe import close_client as close_transcribe_client
 from .message_queue import shutdown_workers
-from .status_line import consume_status_one
+from .status_line import on_state as _on_state_handler
 from . import binding_callbacks as binding
 from . import binding_steal
 from . import binding_lifecycle
@@ -210,26 +210,30 @@ async def post_init(application: Application) -> None:
     # Backend is composed in main.py and passed in via create_bot(backend=...).
     # Fall back to composing one here (rare; exercised by tests that call
     # create_bot() without explicit wiring).
+    # Backend is composed in main.py and passed in via create_bot(backend=...).
+    # Fall back to composing one here (rare; exercised by tests that call
+    # create_bot() without explicit wiring).
     backend = _bootstrap_backend
     if backend is None:
         from ccmux.api import tmux_registry
 
         backend = DefaultBackend(
             tmux_registry=tmux_registry,
-            window_bindings=_windows,
+            registry=_windows,
         )
         set_default_backend(backend)
     _backend = backend
 
     bot = application.bot
 
-    async def _on_message(msg):  # type: ignore[no-untyped-def]
-        await handle_new_message(msg, bot)
+    async def _on_state(instance_id: str, state):  # type: ignore[no-untyped-def]
+        # Delegate to status_line.on_state which matches on ClaudeState.
+        await _on_state_handler(instance_id, state, bot=bot)
 
-    async def _on_status(s):  # type: ignore[no-untyped-def]
-        await consume_status_one(bot, s)
+    async def _on_message(instance_id: str, msg):  # type: ignore[no-untyped-def]
+        await handle_new_message(instance_id, msg, bot)
 
-    await backend.start(on_message=_on_message, on_status=_on_status)
+    await backend.start(on_state=_on_state, on_message=_on_message)
     logger.info("Backend started")
 
     # Watcher tick: debounced notification dispatch for the dashboard topic.
