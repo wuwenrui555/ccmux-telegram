@@ -58,15 +58,17 @@ async def test_start_in_unbound_topic_invokes_picker(_authorized):
 
 
 @pytest.mark.asyncio
-async def test_start_in_bound_topic_shows_welcome(_authorized):
-    """When the topic is already bound, ``/start`` keeps the welcome
-    message and does not re-enter the picker."""
+async def test_start_in_bound_topic_shows_session_info(_authorized):
+    """When the topic is already bound, ``/start`` shows the bound
+    session name and the three commands the user might want next —
+    never re-enters the picker, never shows the generic welcome."""
     from ccmux_telegram import command_basic
 
     update = _mk_update(thread_id=17451)
     context = MagicMock()
     context.user_data = {}
-    fake_topic = MagicMock()  # truthy → topic exists
+    fake_topic = MagicMock()
+    fake_topic.session_name = "daily"
 
     with (
         patch.object(command_basic, "get_topic", return_value=fake_topic),
@@ -78,7 +80,13 @@ async def test_start_in_bound_topic_shows_welcome(_authorized):
     h.assert_not_awaited()
     reply.assert_awaited_once()
     body = reply.call_args.args[1]
-    assert "Claude Code Monitor" in body
+    assert "`daily`" in body
+    assert "/rebind" in body
+    assert "/history" in body
+    assert "/unbind" in body
+    # The generic "Create a new topic" text is for unbound / no-thread
+    # contexts only; must not appear here.
+    assert "Create a new topic" not in body
 
 
 @pytest.mark.asyncio
