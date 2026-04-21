@@ -142,7 +142,7 @@ def build_response_parts(
     return parts
 
 
-async def handle_new_message(msg: ClaudeMessage, bot: Bot) -> None:
+async def handle_new_message(instance_id: str, msg: ClaudeMessage, bot: Bot) -> None:
     """Handle a new assistant message — enqueue for sequential processing.
 
     Messages are queued per-user to ensure status messages always appear last.

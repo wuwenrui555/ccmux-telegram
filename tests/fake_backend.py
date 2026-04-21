@@ -7,8 +7,9 @@ spinning up tmux, JSONL files, or polling loops. Records every call on
 Example:
 
     fake = FakeBackend()
-    fake.window_binding["@0"] = WindowBinding(...)
-    fake.alive["@0"] = True
+    fake.instances["alpha"] = ClaudeInstance(
+        instance_id="alpha", window_id="@0", session_id="sess-1", cwd="/tmp"
+    )
     set_default_backend(fake)
     ...
 """
@@ -18,10 +19,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from ccmux.status_monitor import WindowStatus
-from ccmux.tmux import TmuxWindow
-from ccmux.claude_transcript_parser import ClaudeMessage
-from ccmux.window_bindings import ClaudeSession, WindowBinding
+from ccmux.api import (
+    ClaudeInstance,
+    ClaudeSession,
+    ClaudeState,
+    ClaudeMessage,
+    TmuxWindow,
+)
 
 
 @dataclass
@@ -83,13 +87,12 @@ class FakeBackend:
     """
 
     calls: list[tuple[str, tuple, dict]] = field(default_factory=list)
-    window_binding: dict[str, WindowBinding] = field(default_factory=dict)
-    alive: dict[str, bool] = field(default_factory=dict)
+    instances: dict[str, ClaudeInstance] = field(default_factory=dict)
     pane_text: dict[str, str] = field(default_factory=dict)
     claude_sessions: dict[str, list[ClaudeSession]] = field(default_factory=dict)
     history: dict[str, list[dict]] = field(default_factory=dict)
-    on_message: Callable[[ClaudeMessage], Awaitable[None]] | None = None
-    on_status: Callable[[WindowStatus], Awaitable[None]] | None = None
+    on_state: Callable[[str, ClaudeState], Awaitable[None]] | None = None
+    on_message: Callable[[str, ClaudeMessage], Awaitable[None]] | None = None
     started: bool = False
     stopped: bool = False
     tmux: Any = field(init=False)
@@ -102,22 +105,18 @@ class FakeBackend:
     def _record(self, name: str, *args, **kwargs) -> None:
         self.calls.append((name, args, kwargs))
 
-    def is_alive(self, window_id: str) -> bool:
-        self._record("is_alive", window_id)
-        return self.alive.get(window_id, False)
-
-    def get_window_binding(self, window_id: str) -> WindowBinding | None:
-        self._record("get_window_binding", window_id)
-        return self.window_binding.get(window_id)
+    def get_instance(self, instance_id: str) -> ClaudeInstance | None:
+        self._record("get_instance", instance_id)
+        return self.instances.get(instance_id)
 
     async def start(
         self,
-        on_message: Callable[[ClaudeMessage], Awaitable[None]],
-        on_status: Callable[[WindowStatus], Awaitable[None]],
+        on_state: Callable[[str, ClaudeState], Awaitable[None]],
+        on_message: Callable[[str, ClaudeMessage], Awaitable[None]],
     ) -> None:
         self._record("start")
+        self.on_state = on_state
         self.on_message = on_message
-        self.on_status = on_status
         self.started = True
 
     async def stop(self) -> None:
@@ -126,12 +125,12 @@ class FakeBackend:
 
     # ---- Test-helper methods (not part of the Protocol) ----
 
-    async def emit_message(self, msg: ClaudeMessage) -> None:
+    async def emit_state(self, instance_id: str, state: ClaudeState) -> None:
+        """Simulate a real-time ClaudeState dispatch to the registered callback."""
+        assert self.on_state is not None, "Call start() before emit_state()"
+        await self.on_state(instance_id, state)
+
+    async def emit_message(self, instance_id: str, msg: ClaudeMessage) -> None:
         """Simulate a real-time ClaudeMessage dispatch to the registered callback."""
         assert self.on_message is not None, "Call start() before emit_message()"
-        await self.on_message(msg)
-
-    async def emit_status(self, status: WindowStatus) -> None:
-        """Simulate a WindowStatus dispatch to the registered callback."""
-        assert self.on_status is not None, "Call start() before emit_status()"
-        await self.on_status(status)
+        await self.on_message(instance_id, msg)

@@ -24,9 +24,9 @@ from typing import Any
 import aiofiles
 
 from ccmux.api import (
+    ClaudeInstanceRegistry,
     ClaudeMessage,
     TranscriptParser,
-    WindowBindings,
     get_default_backend,
 )
 from ccmux.config import config as _backend_config
@@ -127,16 +127,20 @@ def _find_tool_use_input(entries: list[dict], tool_use_id: str) -> dict | None:
 
 def _resolve_jsonl_path(window_id: str, session_id: str) -> Path | None:
     try:
-        backend = get_default_backend()
+        get_default_backend()
     except RuntimeError:
         return None
-    wb = backend.get_window_binding(window_id)
-    if wb is None:
+    # tool_context's caller provides a tmux window_id. Resolve to the
+    # owning instance via the backend's registry so we can read cwd.
+    from .runtime import windows
+
+    instance = windows.get_by_window_id(window_id)
+    if instance is None:
         return None
     try:
-        encoded = WindowBindings.encode_cwd(wb.cwd)
+        encoded = ClaudeInstanceRegistry.encode_cwd(instance.cwd)
     except Exception as e:
-        logger.debug("tool_context: encode_cwd failed for %s: %s", wb.cwd, e)
+        logger.debug("tool_context: encode_cwd failed for %s: %s", instance.cwd, e)
         return None
     return Path(_backend_config.claude_projects_path) / encoded / f"{session_id}.jsonl"
 

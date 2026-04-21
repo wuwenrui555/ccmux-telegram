@@ -209,7 +209,7 @@ async def test_create_session_and_bind_pre_trusts_selected_path(
 
     fake_windows = MagicMock()
     fake_windows.load = AsyncMock(side_effect=_instant_load)
-    fake_windows.is_session_in_map = MagicMock(return_value=True)
+    fake_windows.contains = MagicMock(return_value=True)
     monkeypatch.setattr(binding_flow, "_windows", fake_windows)
 
     fake_topics = MagicMock()

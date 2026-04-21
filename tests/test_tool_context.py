@@ -133,11 +133,14 @@ def _write_jsonl(path, entries):
 class TestRecordJsonl:
     @pytest.mark.asyncio
     async def test_record_populates_input_from_jsonl(self, tmp_path):
+        from ccmux.api import ClaudeInstance, ClaudeInstanceRegistry
+
         from ccmux_telegram import tool_context
 
         session_id = "sess-1"
         window_id = "@1"
-        encoded_cwd = "encoded-cwd"
+        cwd = str(tmp_path / "proj")
+        encoded_cwd = ClaudeInstanceRegistry.encode_cwd(cwd)
         jsonl = tmp_path / encoded_cwd / f"{session_id}.jsonl"
         _write_jsonl(
             jsonl,
@@ -145,7 +148,7 @@ class TestRecordJsonl:
                 {
                     "type": "assistant",
                     "sessionId": session_id,
-                    "cwd": "/tmp/proj",
+                    "cwd": cwd,
                     "message": {
                         "content": [
                             {
@@ -153,7 +156,7 @@ class TestRecordJsonl:
                                 "id": "tuse-42",
                                 "name": "Edit",
                                 "input": {
-                                    "file_path": "/tmp/proj/a.py",
+                                    "file_path": f"{cwd}/a.py",
                                     "old_string": "old",
                                     "new_string": "new",
                                 },
@@ -164,22 +167,22 @@ class TestRecordJsonl:
             ],
         )
 
-        wb = MagicMock()
-        wb.cwd = "/tmp/proj"
+        fake_instance = ClaudeInstance(
+            instance_id="alpha",
+            window_id=window_id,
+            session_id=session_id,
+            cwd=cwd,
+        )
+        fake_windows = MagicMock()
+        fake_windows.get_by_window_id.return_value = fake_instance
 
         backend = MagicMock()
-        backend.get_window_binding.return_value = wb
-
-        fake_encode = MagicMock(return_value=encoded_cwd)
-
         fake_config = MagicMock()
         fake_config.claude_projects_path = tmp_path
 
         with (
             patch.object(tool_context, "get_default_backend", return_value=backend),
-            patch.object(
-                tool_context, "WindowBindings", MagicMock(encode_cwd=fake_encode)
-            ),
+            patch("ccmux_telegram.runtime.windows", fake_windows),
             patch.object(tool_context, "_backend_config", fake_config),
         ):
             msg = ClaudeMessage(
@@ -198,29 +201,34 @@ class TestRecordJsonl:
         assert entry.tool_name == "Edit"
         assert entry.tool_use_id == "tuse-42"
         assert entry.input == {
-            "file_path": "/tmp/proj/a.py",
+            "file_path": f"{cwd}/a.py",
             "old_string": "old",
             "new_string": "new",
         }
 
     @pytest.mark.asyncio
     async def test_record_tolerates_missing_file(self, tmp_path):
+        from ccmux.api import ClaudeInstance
+
         from ccmux_telegram import tool_context
 
-        wb = MagicMock()
-        wb.cwd = "/tmp/proj"
+        cwd = str(tmp_path / "proj")
+        fake_instance = ClaudeInstance(
+            instance_id="alpha",
+            window_id="@1",
+            session_id="missing-sess",
+            cwd=cwd,
+        )
+        fake_windows = MagicMock()
+        fake_windows.get_by_window_id.return_value = fake_instance
+
         backend = MagicMock()
-        backend.get_window_binding.return_value = wb
         fake_config = MagicMock()
         fake_config.claude_projects_path = tmp_path  # file does not exist
 
         with (
             patch.object(tool_context, "get_default_backend", return_value=backend),
-            patch.object(
-                tool_context,
-                "WindowBindings",
-                MagicMock(encode_cwd=MagicMock(return_value="nope")),
-            ),
+            patch("ccmux_telegram.runtime.windows", fake_windows),
             patch.object(tool_context, "_backend_config", fake_config),
         ):
             msg = ClaudeMessage(
@@ -241,10 +249,13 @@ class TestRecordJsonl:
 
     @pytest.mark.asyncio
     async def test_record_tolerates_missing_tool_use_id_in_tail(self, tmp_path):
+        from ccmux.api import ClaudeInstance, ClaudeInstanceRegistry
+
         from ccmux_telegram import tool_context
 
         session_id = "sess-2"
-        encoded_cwd = "e2"
+        cwd = str(tmp_path / "proj2")
+        encoded_cwd = ClaudeInstanceRegistry.encode_cwd(cwd)
         jsonl = tmp_path / encoded_cwd / f"{session_id}.jsonl"
         _write_jsonl(
             jsonl,
@@ -252,7 +263,7 @@ class TestRecordJsonl:
                 {
                     "type": "assistant",
                     "sessionId": session_id,
-                    "cwd": "/tmp/proj",
+                    "cwd": cwd,
                     "message": {
                         "content": [
                             {
@@ -267,20 +278,22 @@ class TestRecordJsonl:
             ],
         )
 
-        wb = MagicMock()
-        wb.cwd = "/tmp/proj"
+        fake_instance = ClaudeInstance(
+            instance_id="beta",
+            window_id="@1",
+            session_id=session_id,
+            cwd=cwd,
+        )
+        fake_windows = MagicMock()
+        fake_windows.get_by_window_id.return_value = fake_instance
+
         backend = MagicMock()
-        backend.get_window_binding.return_value = wb
         fake_config = MagicMock()
         fake_config.claude_projects_path = tmp_path
 
         with (
             patch.object(tool_context, "get_default_backend", return_value=backend),
-            patch.object(
-                tool_context,
-                "WindowBindings",
-                MagicMock(encode_cwd=MagicMock(return_value=encoded_cwd)),
-            ),
+            patch("ccmux_telegram.runtime.windows", fake_windows),
             patch.object(tool_context, "_backend_config", fake_config),
         ):
             msg = ClaudeMessage(

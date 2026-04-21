@@ -1,124 +1,139 @@
-"""Status event consumer — Telegram-side translator for WindowStatus.
+"""State event consumer — Telegram-side translator for ClaudeState.
 
-Consumes the raw WindowStatus observations produced by StatusMonitor and
+Consumes (instance_id, ClaudeState) observations from the backend and
 performs all Telegram-facing actions:
 
-  - Enqueue status-line updates (respecting queue non-empty → skip).
-  - Show/hide interactive prompt UI (permission prompts, AskUserQuestion,
-    ExitPlanMode, etc.) detected via terminal polling rather than JSONL.
-  - Track interactive-mode state transitions (same window, switched window,
-    prompt just disappeared).
+  - Working(text)       → enqueue status line update.
+  - Idle()              → clear any dangling interactive message.
+  - Blocked(ui, content) → hand off to the interactive UI handler.
+  - Dead()              → surface a 'Resuming session…' placeholder.
 
-This keeps the server-side status_monitor free of Telegram knowledge.
+Every observation updates the module-level StateCache first so
+downstream consumers (topic_bindings.is_alive, watcher) see the
+latest state before any side effect runs.
 """
+
+from __future__ import annotations
 
 import logging
 
 from telegram import Bot
 
-from ccmux.api import WindowStatus
-from .prompt import clear_interactive_msg, handle_interactive_ui
-from .prompt_state import get_interactive_window
+from ccmux.api import Blocked, ClaudeState, Dead, Idle, Working
+
 from .message_queue import enqueue_status_update
-from .watcher import get_service as _get_watcher_service
+from .prompt_state import get_interactive_window
+from .state_cache import get_state_cache
 
 logger = logging.getLogger(__name__)
 
 
-async def consume_statuses(bot: Bot, statuses: list[WindowStatus]) -> None:
-    """Apply every status observation to the Telegram side."""
-    for s in statuses:
-        await consume_status_one(bot, s)
+# Thin forwarding wrappers so that tests can monkeypatch
+# `ccmux_telegram.status_line.clear_interactive_msg` /
+# `ccmux_telegram.status_line.handle_interactive_ui` without needing to
+# import `ccmux_telegram.prompt` (which drags in `tool_context` and its
+# pre-v2.0.0 `WindowBindings` dependency that is removed in B3).
+async def clear_interactive_msg(*args, **kwargs):  # type: ignore[no-untyped-def]
+    from .prompt import clear_interactive_msg as _f
+
+    return await _f(*args, **kwargs)
 
 
-async def consume_status_one(bot: Bot, s: WindowStatus) -> None:
-    """Single-status variant — convenience wrapper around `_consume_one`.
+async def handle_interactive_ui(*args, **kwargs):  # type: ignore[no-untyped-def]
+    from .prompt import handle_interactive_ui as _f
 
-    Resolves the backend-native `WindowStatus` (window_id only) to the
-    owning topic binding. Observations for windows with no bound topic
-    are ignored at the consumer layer.
+    return await _f(*args, **kwargs)
+
+
+async def on_state(instance_id: str, state: ClaudeState, *, bot: Bot) -> None:
+    """Apply a ClaudeState observation to the Telegram side.
+
+    `instance_id` is the stable backend identifier (equal to
+    `topic.session_name` in the current TopicBinding). Frontend
+    resolves `window_id` via `backend.get_instance(instance_id).window_id`
+    when it needs the tmux handle.
     """
-    from .runtime import get_topic_by_window_id
+    # Always update the cache first so downstream consumers see the
+    # latest observed state even if we early-return below.
+    get_state_cache().update(instance_id, state)
 
-    topic = get_topic_by_window_id(s.window_id)
-    if topic is None:
-        # Window has no Telegram binding — feed the watcher anyway (it
-        # filters by its own registration) and skip status rendering.
-        try:
-            _get_watcher_service().process(s, topic=None)
-        except Exception as e:
-            logger.debug("Watcher process error: %s", e)
-        return
+    from .runtime import get_topic_by_session_name
 
+    topic = get_topic_by_session_name(instance_id)
+
+    # Feed the watcher regardless of whether we render anything to the
+    # user's own topic -- the watcher's dashboard lives in a separate
+    # topic and needs every observation.
     try:
-        await _consume_one(bot, s, topic)
-    except Exception as e:
-        logger.debug(
-            "Status consume error for user %d thread %s: %s",
-            topic.user_id,
-            topic.thread_id,
-            e,
-        )
-    try:
-        _get_watcher_service().process(s, topic=topic)
+        from .watcher import get_service as _get_watcher_service
+
+        _get_watcher_service().process(instance_id, state, topic=topic)
     except Exception as e:
         logger.debug("Watcher process error: %s", e)
 
+    if topic is None:
+        # Instance has no bound Telegram topic; nothing to render.
+        return
 
-async def _consume_one(bot: Bot, s: WindowStatus, topic) -> None:
     user_id = topic.user_id
     thread_id = topic.thread_id
     chat_id = topic.group_chat_id
-    window_id = s.window_id
+    window_id = topic.window_id  # joined by runtime helper; may be "" if pending
 
-    # Window gone → clear status. Rate limiting happens inside
-    # enqueue_status_update; we no longer suppress status purely because
-    # the content queue has work pending — throttling keeps edit volume
-    # bounded while still surfacing a "Claude is alive" signal during
-    # active tool-call bursts.
-    if not s.window_exists:
-        await enqueue_status_update(
-            bot, user_id, window_id, None, thread_id=thread_id, chat_id=chat_id
-        )
-        return
-
-    # Transient capture failure → keep existing status message
-    if not s.pane_captured:
-        return
-
-    interactive_window = get_interactive_window(user_id, thread_id)
-    should_check_new_ui = True
-
-    if interactive_window == window_id:
-        # User is in interactive mode for THIS window
-        if s.interactive_ui is not None:
-            # UI still showing — skip status update (user is interacting)
-            return
-        # UI gone — clear interactive mode, fall through to status check.
-        # Don't re-check for new UI this cycle (the old one just disappeared).
-        await clear_interactive_msg(user_id, bot, thread_id, chat_id=chat_id)
-        should_check_new_ui = False
-    elif interactive_window is not None:
-        # User is in interactive mode for a DIFFERENT window — clear stale
-        await clear_interactive_msg(user_id, bot, thread_id, chat_id=chat_id)
-
-    if should_check_new_ui and s.interactive_ui is not None:
+    try:
+        await _dispatch(bot, state, instance_id, user_id, thread_id, chat_id, window_id)
+    except Exception as e:
         logger.debug(
-            "Interactive UI detected in polling (user=%d, window=%s, thread=%s)",
+            "on_state dispatch error for instance=%s user=%d thread=%s: %s",
+            instance_id,
             user_id,
-            window_id,
             thread_id,
+            e,
         )
-        await handle_interactive_ui(bot, user_id, window_id, thread_id, chat_id=chat_id)
-        return
 
-    if s.status_text:
-        await enqueue_status_update(
-            bot,
-            user_id,
-            window_id,
-            s.status_text,
-            thread_id=thread_id,
-            chat_id=chat_id,
-        )
-    # If no status line, keep existing status message (don't clear on transient state)
+
+async def _dispatch(
+    bot: Bot,
+    state: ClaudeState,
+    instance_id: str,
+    user_id: int,
+    thread_id: int | None,
+    chat_id: int | None,
+    window_id: str,
+) -> None:
+    match state:
+        case Working(status_text=text):
+            await enqueue_status_update(
+                bot,
+                user_id,
+                window_id,
+                text,
+                thread_id=thread_id,
+                chat_id=chat_id,
+            )
+
+        case Idle():
+            # Clear any dangling interactive message bound to this instance.
+            if get_interactive_window(user_id, thread_id) == window_id:
+                await clear_interactive_msg(user_id, bot, thread_id, chat_id=chat_id)
+
+        case Blocked(ui=ui, content=content):
+            await handle_interactive_ui(
+                bot,
+                user_id,
+                window_id,
+                thread_id,
+                chat_id=chat_id,
+                ui=ui,
+                content=content,
+            )
+
+        case Dead():
+            await enqueue_status_update(
+                bot,
+                user_id,
+                window_id,
+                "Resuming session\u2026",
+                thread_id=thread_id,
+                chat_id=chat_id,
+            )
