@@ -30,9 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Thin forwarding wrappers so that tests can monkeypatch
 # `ccmux_telegram.status_line.clear_interactive_msg` /
-# `ccmux_telegram.status_line.handle_interactive_ui` without needing to
-# import `ccmux_telegram.prompt` (which drags in `tool_context` and its
-# pre-v2.0.0 `WindowBindings` dependency that is removed in B3).
+# `ccmux_telegram.status_line.handle_interactive_ui` without importing
+# `ccmux_telegram.prompt` at module load.
 async def clear_interactive_msg(*args, **kwargs):  # type: ignore[no-untyped-def]
     from .prompt import clear_interactive_msg as _f
 
