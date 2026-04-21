@@ -148,9 +148,7 @@ async def test_session_name_popped_by_first_call() -> None:
     }
     ctx = _make_context(user_data)
 
-    with patch.object(
-        binding_callbacks, "_create_session_and_bind", new=AsyncMock()
-    ):
+    with patch.object(binding_callbacks, "_create_session_and_bind", new=AsyncMock()):
         await binding_callbacks.handle_permission_callback(update, ctx)
 
     assert binding_callbacks.SESSION_NAME_KEY not in user_data

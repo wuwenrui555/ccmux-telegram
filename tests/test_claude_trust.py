@@ -197,12 +197,8 @@ async def test_create_session_and_bind_pre_trusts_selected_path(
     # before tm.get_session()/create_session would have run.
     fake_tm = MagicMock()
     fake_tm.get_session = MagicMock(return_value=None)
-    fake_tm.create_session = AsyncMock(
-        return_value=(True, "Created", "win", "@100")
-    )
-    monkeypatch.setattr(
-        binding_flow.tmux_registry, "get_or_create", lambda _n: fake_tm
-    )
+    fake_tm.create_session = AsyncMock(return_value=(True, "Created", "win", "@100"))
+    monkeypatch.setattr(binding_flow.tmux_registry, "get_or_create", lambda _n: fake_tm)
     monkeypatch.setattr(
         binding_flow.tmux_registry, "update_window_map", lambda *_args: None
     )
