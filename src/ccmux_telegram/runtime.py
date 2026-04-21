@@ -4,31 +4,31 @@ Two singletons:
 
 - `topics`  : `TopicBindings` — topic -> session_name map (writes
   `topic_bindings.json`).
-- `windows` : backend `WindowRegistry` instance, passed into
+- `windows` : backend `ClaudeInstanceRegistry` instance, passed into
   `DefaultBackend` by `main.py` so the same object services both
   the slow-loop `verify_all` (backend) and frontend lookups.
 
 Helpers join topics with window info. Liveness queries go through the
-backend via `windows.is_window_alive(window_id)`.
+frontend state cache (state_cache.py).
 """
 
 from __future__ import annotations
 
 import logging
 
-from ccmux.api import WindowBindings, WindowBinding
+from ccmux.api import ClaudeInstanceRegistry, ClaudeInstance
 
 from .topic_bindings import TopicBinding, TopicBindings
 
 logger = logging.getLogger(__name__)
 
 topics = TopicBindings()
-windows = WindowBindings()
+windows = ClaudeInstanceRegistry()
 
 
 def _join_window_id(topic: TopicBinding) -> TopicBinding:
-    """Populate `window_id` on a TopicBinding by consulting WindowRegistry."""
-    info = windows.get_by_session_name(topic.session_name)
+    """Populate `window_id` on a TopicBinding by consulting ClaudeInstanceRegistry."""
+    info = windows.get(topic.session_name)
     if info is None or not info.window_id:
         return topic
     return TopicBinding(
@@ -50,11 +50,11 @@ def get_topic(user_id: int, thread_id: int | None) -> TopicBinding | None:
 
 def get_topic_for_claude_session(claude_session_id: str) -> TopicBinding | None:
     """Return the TopicBinding whose Claude session matches the given id."""
-    info = windows.find_by_claude_session_id(claude_session_id)
+    info = windows.find_by_session_id(claude_session_id)
     if info is None:
         return None
     for topic in topics.all():
-        if topic.session_name == info.session_name:
+        if topic.session_name == info.instance_id:
             return TopicBinding(
                 user_id=topic.user_id,
                 thread_id=topic.thread_id,
@@ -83,11 +83,11 @@ def get_topic_by_window_id(window_id: str) -> TopicBinding | None:
     """Return the TopicBinding whose bound window_id matches, else None."""
     if not window_id:
         return None
-    info = windows.get(window_id)
+    info = windows.get_by_window_id(window_id)
     if info is None:
         return None
     for topic in topics.all():
-        if topic.session_name == info.session_name:
+        if topic.session_name == info.instance_id:
             return TopicBinding(
                 user_id=topic.user_id,
                 thread_id=topic.thread_id,
@@ -98,13 +98,6 @@ def get_topic_by_window_id(window_id: str) -> TopicBinding | None:
     return None
 
 
-def is_window_alive(window_id: str) -> bool:
-    """Cached liveness verdict (delegates to backend Protocol)."""
-    from ccmux.api import get_default_backend
-
-    return get_default_backend().is_alive(window_id)
-
-
 async def resolve_stale_ids() -> None:
     """Reload window map on startup."""
     await windows.load()
@@ -112,12 +105,11 @@ async def resolve_stale_ids() -> None:
 
 __all__ = [
     "TopicBinding",
-    "WindowBinding",
+    "ClaudeInstance",
     "get_topic",
     "get_topic_by_session_name",
     "get_topic_by_window_id",
     "get_topic_for_claude_session",
-    "is_window_alive",
     "iter_topics_joined",
     "resolve_stale_ids",
     "topics",
