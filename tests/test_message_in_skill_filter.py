@@ -54,7 +54,7 @@ class TestToolContextWiring:
         ):
             tc.record = AsyncMock()
             tc.clear = MagicMock()
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         tc.record.assert_awaited_once()
         args, _ = tc.record.call_args
@@ -85,7 +85,7 @@ class TestToolContextWiring:
         ):
             tc.record = AsyncMock()
             tc.clear = MagicMock()
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         tc.clear.assert_called_once_with("@5", "t1")
 
@@ -111,7 +111,7 @@ class TestToolContextWiring:
         ):
             tc.record = AsyncMock()
             tc.clear = MagicMock()
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         tc.record.assert_not_called()
         tc.clear.assert_not_called()
@@ -139,7 +139,7 @@ async def test_skill_tool_use_still_emitted(_patch_config):
         ),
         patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
     ):
-        await message_in.handle_new_message(msg, AsyncMock())
+        await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
     enq.assert_called_once()
 
@@ -168,7 +168,7 @@ class TestToolCallsAllowlist:
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
         ):
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         enq.assert_not_called()
 
@@ -195,7 +195,7 @@ class TestToolCallsAllowlist:
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
         ):
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         enq.assert_called_once()
 
@@ -223,7 +223,7 @@ class TestToolCallsAllowlist:
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
         ):
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         enq.assert_called_once()
 
@@ -254,7 +254,7 @@ class TestSkillBodyUserText:
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
         ):
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         enq.assert_not_called()
 
@@ -279,7 +279,7 @@ class TestSkillBodyUserText:
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
         ):
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         enq.assert_called_once()
 
@@ -303,7 +303,7 @@ class TestSkillBodyUserText:
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
         ):
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         enq.assert_called_once()
 
@@ -327,6 +327,6 @@ class TestSkillBodyUserText:
             ),
             patch.object(message_in, "enqueue_content_message", new=AsyncMock()) as enq,
         ):
-            await message_in.handle_new_message(msg, AsyncMock())
+            await message_in.handle_new_message("test-instance", msg, AsyncMock())
 
         enq.assert_not_called()

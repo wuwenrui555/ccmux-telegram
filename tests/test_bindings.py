@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ccmux.window_bindings import WindowBindings
+from ccmux.api import ClaudeInstanceRegistry as WindowBindings
 from ccmux_telegram.topic_bindings import TopicBinding, TopicBindings
 
 
@@ -40,7 +40,9 @@ def tmp_config(tmp_path, monkeypatch):
     mock_config.config_dir = tmp_path
 
     monkeypatch.setattr("ccmux_telegram.topic_bindings.config", mock_config)
-    monkeypatch.setattr("ccmux.window_bindings.config", mock_config)
+    # ccmux.window_bindings no longer exists; ClaudeInstanceRegistry does not
+    # use a config file path — this patch is a no-op placeholder for B5.
+    # monkeypatch.setattr("ccmux.window_bindings.config", mock_config)
 
     return {
         "state_file": state_file,

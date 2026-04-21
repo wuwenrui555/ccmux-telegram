@@ -74,7 +74,7 @@ def main() -> None:
         "Registry recovered: %d sessions", len(tmux_registry.registered_session_names())
     )
 
-    backend = DefaultBackend(tmux_registry=tmux_registry, window_bindings=windows)
+    backend = DefaultBackend(tmux_registry=tmux_registry, registry=windows)
     set_default_backend(backend)
 
     logger.info("Starting Telegram bot...")
