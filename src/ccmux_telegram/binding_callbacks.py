@@ -233,7 +233,7 @@ async def handle_window_callback(
         )
 
         # Warn if session_map has no entry (Claude hook hasn't fired)
-        if not has_window_binding(selected_wid, session_name):
+        if not has_window_binding(session_name):
             await safe_send(
                 context.bot,
                 chat.id,

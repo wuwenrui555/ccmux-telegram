@@ -306,7 +306,7 @@ async def _create_session_and_bind(
 
         for _ in range(int(hook_timeout / poll_interval)):
             await _windows.load()
-            if _windows.is_session_in_map(session_name):
+            if _windows.contains(session_name):
                 hook_ok = True
                 break
             await asyncio.sleep(poll_interval)
@@ -424,7 +424,7 @@ async def _proceed_with_session(
         await safe_edit(query, f"✅ Bound to `{session_name}` ({w.window_id})")
 
         # Warn if session_map has no entry (Claude hook hasn't fired)
-        if not has_window_binding(w.window_id, session_name):
+        if not has_window_binding(session_name):
             await safe_send(
                 context.bot,
                 chat.id,
