@@ -20,7 +20,6 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from .markdown import convert_markdown
 from .runtime import get_topic
 from ccmux.api import BlockedUI, extract_interactive_content, tmux_registry
 from .util import get_thread_id, get_tm_and_window
@@ -56,7 +55,12 @@ _SELECTED_OPTION_RE = re.compile(r"^\s*❯\s+")
 
 
 def _format_blocked_content(text: str) -> str:
-    """Apply heuristic Markdown to raw pane content before MarkdownV2 render.
+    """Apply heuristic Markdown to raw pane content.
+
+    Returns plain Markdown that :func:`_render_mdv2` will translate to
+    Telegram MarkdownV2. Leading whitespace stays *outside* the markers
+    because Markdown does not recognize ``** x**`` (a space right after
+    the opening ``**``) as bold.
 
     Rules, line-by-line:
 
@@ -64,7 +68,8 @@ def _format_blocked_content(text: str) -> str:
       (``Read file``, ``Bash command``, ``Enable auto mode?``, ``Do you
       want to proceed?``). Bold it.
     - Any subsequent line ending with ``?`` is also a question header
-      (e.g. `Do you want to proceed?` inside a tool-preview block). Bold.
+      (e.g. ``Do you want to proceed?`` inside a tool-preview block).
+      Bold.
     - Lines starting with ``❯`` are the currently-selected option.
       Bold the whole line.
     - Lines starting with ``Esc to `` / ``Enter to `` are the footer
@@ -82,25 +87,81 @@ def _format_blocked_content(text: str) -> str:
             styled.append(line)
             continue
 
+        indent_len = len(line) - len(line.lstrip())
+        indent = line[:indent_len]
+        body = line[indent_len:].rstrip()
+
         if not first_nonblank_done:
-            styled.append(f"**{line.rstrip()}**")
+            styled.append(f"{indent}**{body}**")
             first_nonblank_done = True
             continue
 
         if _SELECTED_OPTION_RE.match(line):
-            styled.append(f"**{line.rstrip()}**")
+            styled.append(f"{indent}**{body}**")
             continue
 
         if _FOOTER_HINT_RE.match(line):
-            styled.append(f"_{line.rstrip()}_")
+            styled.append(f"{indent}_{body}_")
             continue
 
         if stripped.endswith("?"):
-            styled.append(f"**{line.rstrip()}**")
+            styled.append(f"{indent}**{body}**")
             continue
 
         styled.append(line)
     return "\n".join(styled)
+
+
+# MarkdownV2 escaping — Telegram requires these characters to be
+# backslash-prefixed when they appear as literal text inside a message:
+#   _ * [ ] ( ) ~ ` > # + - = | { } . ! \
+_MDV2_SPECIAL = set("_*[]()~`>#+-=|{}.!\\")
+
+
+def _escape_mdv2_chunk(s: str) -> str:
+    """Escape every MarkdownV2 special char inside a literal chunk."""
+    return "".join("\\" + c if c in _MDV2_SPECIAL else c for c in s)
+
+
+def _render_mdv2(text: str) -> str:
+    """Translate our limited Markdown to Telegram MarkdownV2.
+
+    Handles only ``**bold**`` and ``_italic_`` pairs; everything else is
+    escaped as literal. We bypass the full ``convert_markdown`` pipeline
+    because its mistletoe parser rewrites ordered-list indentation
+    (``1. Yes`` / ``2. No``) and rejects ``** x**`` bold with a space
+    after the opening marker — both common in Claude's blocking UIs.
+    """
+    out: list[str] = []
+    out_lines: list[str] = []
+    for line in text.split("\n"):
+        i = 0
+        line_out: list[str] = []
+        while i < len(line):
+            if line[i : i + 2] == "**":
+                end = line.find("**", i + 2)
+                if end != -1:
+                    body = line[i + 2 : end]
+                    line_out.append("*")
+                    line_out.append(_escape_mdv2_chunk(body))
+                    line_out.append("*")
+                    i = end + 2
+                    continue
+            if line[i] == "_":
+                end = line.find("_", i + 1)
+                if end != -1:
+                    body = line[i + 1 : end]
+                    line_out.append("_")
+                    line_out.append(_escape_mdv2_chunk(body))
+                    line_out.append("_")
+                    i = end + 1
+                    continue
+            c = line[i]
+            line_out.append("\\" + c if c in _MDV2_SPECIAL else c)
+            i += 1
+        out_lines.append("".join(line_out))
+    out.append("\n".join(out_lines))
+    return "".join(out)
 
 
 def _build_interactive_keyboard(
@@ -226,7 +287,7 @@ async def handle_interactive_ui(
     # the pane (Claude renders `<Tool name>\n<Tool call>\n\nDo you want
     # to proceed?` as a single region, which the parser's walkback
     # captures). No JSONL lookup needed — see drop-tool-context.
-    rendered_text = convert_markdown(_format_blocked_content(text))
+    rendered_text = _render_mdv2(_format_blocked_content(text))
 
     thread_kwargs: dict[str, int] = {}
     if thread_id is not None:
