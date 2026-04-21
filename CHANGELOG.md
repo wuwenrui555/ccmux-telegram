@@ -6,8 +6,14 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 1.2.0 — 2026-04-20
+
 ### Added
 
+- `CCMUX_TOOL_CALLS_ALLOWLIST` env var (default `"Skill"`, comma
+  separated). Tools on the list bypass `CCMUX_SHOW_TOOL_CALLS=false`,
+  so users who keep tool-call notifications off can still see a
+  one-line `**Skill**(name)` signal for explicit skill invocations.
 - `CCMUX_SHOW_SKILL_BODIES` env flag (default `false`) that suppresses
   `Skill` tool_result bodies so Skill invocations do not flood the chat.
   The `Skill(name)` tool-use summary is always shown; only the full body
@@ -16,6 +22,31 @@ depends on backend 1.x.
   pending tool's input (file path, unified diff, command, or key/value
   dump) inline, fetched from the session JSONL on demand. Users can
   approve or reject without scrolling back for context.
+- `claude_trust.mark_dir_trusted` — pre-sets the target directory's
+  `hasTrustDialogAccepted` flag in `~/.claude.json` before launching
+  Claude in a newly-created session. Without this, Claude blocks on
+  the "Trust this folder?" dialog, the `SessionStart` hook never
+  fires, and the bound topic ends up stuck on "has no window yet".
+  Write is atomic (tmp + rename) and best-effort: failures fall
+  through to the old behaviour.
+
+### Fixed
+
+- Claude Code injects the full skill body as a plain user-role text
+  block (starting with `"Base directory for this skill:"`) rather than
+  as a tool_result, so the tool_result-based gate never caught it.
+  Suppress the injected body under `CCMUX_SHOW_SKILL_BODIES`.
+- `handle_permission_callback` now acks the Telegram callback up
+  front. The downstream create flow can take several seconds
+  (SessionStart hook wait, bindings write) and during that time the
+  Telegram client still shows the button as pending. After the
+  ~15-second callback window the client (or an impatient user)
+  redelivered the same callback, producing a duplicate handler
+  invocation that crashed on the now-empty `SESSION_NAME_KEY`.
+- `handle_permission_callback` atomically claims `SESSION_NAME_KEY`
+  with a single `pop`. Stale duplicate deliveries get `None` and
+  return silently instead of overwriting the first handler's success
+  UI with a "session name missing" warning.
 
 ## 1.1.0 — 2026-04-19
 
