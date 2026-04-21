@@ -19,11 +19,10 @@ import re
 from .config import config
 from .runtime import get_topic_for_claude_session
 from ccmux.api import ClaudeMessage
-from .prompt import clear_interactive_msg, handle_interactive_ui
+from .prompt import handle_interactive_ui
 from .prompt_state import (
     PROMPT_TOOL_NAMES,
     clear_interactive_mode,
-    get_interactive_msg_id,
     set_interactive_mode,
 )
 from .markdown import convert_markdown_tables
@@ -180,11 +179,13 @@ async def handle_new_message(instance_id: str, msg: ClaudeMessage, bot: Bot) -> 
             return
         clear_interactive_mode(user_id, thread_id)
 
-    # Any non-interactive message means the interaction is complete
-    if get_interactive_msg_id(user_id, thread_id):
-        await clear_interactive_msg(
-            user_id, bot, thread_id, chat_id=topic.group_chat_id
-        )
+    # State_monitor owns the interactive msg lifecycle in v2.x: its
+    # Idle dispatch (status_line.on_state) calls clear_interactive_msg
+    # when the pane transitions out of Blocked. Doing a blanket clear
+    # here would race -- Claude Code 2.1.x emits the `tool_use`
+    # ClaudeMessage while the permission UI is still live on the
+    # pane, and this handler would then delete the interactive msg
+    # state_monitor just sent.
 
     # Skip tool call notifications when CCMUX_SHOW_TOOL_CALLS=false,
     # unless the tool name is on CCMUX_TOOL_CALLS_ALLOWLIST (default: "Skill").
