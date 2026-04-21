@@ -8,7 +8,7 @@ removed compat facade now lives in two separate classes
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,7 +58,7 @@ def topics(tmp_config) -> TopicBindings:
 
 @pytest.fixture
 def windows(tmp_config) -> WindowBindings:
-    return WindowBindings()
+    return WindowBindings(map_file=tmp_config["bindings_file"])
 
 
 def _write_state(state_file: Path, data: dict) -> None:
@@ -79,7 +79,7 @@ def _make_binding_entry(
 
 def _join(topic: TopicBinding, windows: WindowBindings) -> TopicBinding:
     """Replicate runtime._join_window_id for test assertions."""
-    info = windows.get_by_session_name(topic.session_name)
+    info = windows.get(topic.session_name)
     if info is None or not info.window_id:
         return topic
     return TopicBinding(
@@ -225,18 +225,18 @@ class TestSessionMapReadSessionMapFile:
             tmp_config["bindings_file"],
             {"aclf": _make_binding_entry("@4", "sid-aclf", "/home/aclf")},
         )
-        w = WindowBindings()
-        assert "aclf" in w._data
-        assert w._data["aclf"]["window_id"] == "@4"
+        w = WindowBindings(map_file=tmp_config["bindings_file"])
+        assert "aclf" in w.raw
+        assert w.raw["aclf"]["window_id"] == "@4"
 
     def test_skips_non_dict_entries(self, tmp_config) -> None:
         _write_bindings_file(
             tmp_config["bindings_file"],
             {"good": _make_binding_entry(), "bad": "not a dict"},
         )
-        w = WindowBindings()
-        assert "good" in w._data
-        assert "bad" not in w._data
+        w = WindowBindings(map_file=tmp_config["bindings_file"])
+        assert "good" in w.raw
+        assert "bad" not in w.raw
 
     def test_corrupt_json(self, tmp_config) -> None:
         tmp_config["bindings_file"].write_text("{broken")
@@ -260,7 +260,7 @@ class TestTopicWindowJoin:
             {"aclf": _make_binding_entry("@4", "sid-aclf", "/home/aclf")},
         )
         topics = TopicBindings()
-        windows = WindowBindings()
+        windows = WindowBindings(map_file=tmp_config["bindings_file"])
 
         topic = topics.get(100, 1)
         assert topic is not None
@@ -269,9 +269,9 @@ class TestTopicWindowJoin:
         joined = _join(topic, windows)
         assert joined.window_id == "@4"
 
-        info = windows.get_by_session_name("aclf")
+        info = windows.get("aclf")
         assert info is not None
-        assert info.claude_session_id == "sid-aclf"
+        assert info.session_id == "sid-aclf"
         assert info.cwd == "/home/aclf"
 
     def test_pending_when_session_map_missing(self, tmp_config) -> None:
@@ -280,7 +280,7 @@ class TestTopicWindowJoin:
             {"100": {"1": {"tmux_session_name": "aclf", "group_chat_id": -999}}},
         )
         topics = TopicBindings()
-        windows = WindowBindings()
+        windows = WindowBindings(map_file=tmp_config["bindings_file"])
 
         topic = topics.get(100, 1)
         assert topic is not None
@@ -303,30 +303,31 @@ class TestSessionMapLoad:
             {"aclf": _make_binding_entry("@4", "sid-aclf")},
         )
         await windows.load()
-        info = windows.get_by_session_name("aclf")
+        info = windows.get("aclf")
         assert info is not None
         assert info.window_id == "@4"
 
 
 class TestIsSessionInMap:
-    def test_present_and_complete(self, windows, tmp_config) -> None:
+    def test_present_and_complete(self, tmp_config) -> None:
         _write_bindings_file(
             tmp_config["bindings_file"],
             {"aclf": _make_binding_entry()},
         )
-        windows._read()
-        assert windows.is_session_in_map("aclf") is True
+        windows = WindowBindings(map_file=tmp_config["bindings_file"])
+        assert windows.contains("aclf") is True
 
-    def test_not_present(self, windows) -> None:
-        assert windows.is_session_in_map("nonexistent") is False
+    def test_not_present(self, tmp_config) -> None:
+        windows = WindowBindings(map_file=tmp_config["bindings_file"])
+        assert windows.contains("nonexistent") is False
 
-    def test_incomplete_entry(self, windows, tmp_config) -> None:
+    def test_incomplete_entry(self, tmp_config) -> None:
         _write_bindings_file(
             tmp_config["bindings_file"],
             {"aclf": {"window_id": "", "session_id": "", "cwd": ""}},
         )
-        windows._read()
-        assert windows.is_session_in_map("aclf") is False
+        windows = WindowBindings(map_file=tmp_config["bindings_file"])
+        assert windows.contains("aclf") is False
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +447,13 @@ class TestAliveStatus:
         assert topic.window_id == ""
         assert topics.is_alive(topic) is True
 
-    def test_is_alive_delegates_to_backend(self, topics) -> None:
-        """With a window_id, is_alive consults runtime.windows.is_window_alive."""
-        from ccmux_telegram import runtime
+    def test_is_alive_reads_state_cache(self, topics) -> None:
+        """With a window_id, is_alive reads from the frontend StateCache."""
+        from ccmux.api import Dead, Idle
+        from ccmux_telegram.state_cache import get_state_cache
+
+        cache = get_state_cache()
+        cache._data.clear()  # test-only reset
 
         topics.bind(100, 1, "aclf", -999)
         base = topics.get(100, 1)
@@ -461,7 +466,13 @@ class TestAliveStatus:
             session_name=base.session_name,
         )
 
-        with patch.object(runtime, "is_window_alive", return_value=False):
-            assert topics.is_alive(topic) is False
-        with patch.object(runtime, "is_window_alive", return_value=True):
-            assert topics.is_alive(topic) is True
+        # No observation yet -> not alive
+        assert topics.is_alive(topic) is False
+
+        # Idle observation -> alive
+        cache.update("aclf", Idle())
+        assert topics.is_alive(topic) is True
+
+        # Dead -> not alive
+        cache.update("aclf", Dead())
+        assert topics.is_alive(topic) is False
