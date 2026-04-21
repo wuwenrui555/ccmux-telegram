@@ -6,6 +6,22 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 2.1.2 — 2026-04-21
+
+### Fixed
+
+- `_process_status_update_task` would post a fresh pinned status
+  message whenever two poll ticks produced byte-identical
+  `status_text` values. Telegram answered the edit call with
+  `BadRequest: Message is not modified`, which the catch treated as
+  a generic edit failure and fell through to
+  `_do_send_status_message`. On a `working` streak this stair-stepped
+  duplicate spinner messages (`Infusing… (3m 14s)`, `Infusing…
+  (3m 19s)`, …) in the chat instead of a single in-place edit. The
+  catch now identifies the specific error, caches the text so the
+  next tick's fast-path skip fires, and returns without falling
+  through.
+
 ## 2.1.1 — 2026-04-21
 
 ### Fixed
