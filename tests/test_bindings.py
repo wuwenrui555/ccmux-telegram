@@ -40,9 +40,14 @@ def tmp_config(tmp_path, monkeypatch):
     mock_config.config_dir = tmp_path
 
     monkeypatch.setattr("ccmux_telegram.topic_bindings.config", mock_config)
-    # ccmux.window_bindings no longer exists; ClaudeInstanceRegistry does not
-    # use a config file path — this patch is a no-op placeholder for B5.
-    # monkeypatch.setattr("ccmux.window_bindings.config", mock_config)
+    # ClaudeInstanceRegistry() without map_file falls back to
+    # `config.instances_file` at init time. Redirect that attribute
+    # on the backend's module-level config singleton so tests that
+    # exercise the default-path code path don't read the developer's
+    # real ~/.ccmux/claude_instances.json (saw 3 failures in
+    # TestSessionMapReadSessionMapFile on populated home dirs; CI was
+    # green only because its runner has an empty $HOME).
+    monkeypatch.setattr("ccmux.config.config.instances_file", bindings_file)
 
     return {
         "state_file": state_file,
