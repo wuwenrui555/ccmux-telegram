@@ -23,6 +23,7 @@ from .sender import (
     PARSE_MODE,
     send_with_fallback,
 )
+from .status_render import render_status_text
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ async def _process_status_update_task(
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=msg_id,
-                    text=_mq._ensure_formatted(status_text),
+                    text=_mq._ensure_formatted(render_status_text(status_text)),
                     parse_mode=PARSE_MODE,
                     link_preview_options=NO_LINK_PREVIEW,
                 )
@@ -148,7 +149,7 @@ async def _do_send_status_message(
     sent = await send_with_fallback(
         bot,
         chat_id,
-        text,
+        render_status_text(text),
         **_mq._send_kwargs(thread_id),  # type: ignore[arg-type]
     )
     if sent:
