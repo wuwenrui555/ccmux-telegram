@@ -53,6 +53,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await handle_unbound_topic(update, context, user, thread_id, text="")
         return
 
+    if topic is not None:
+        await safe_reply(
+            update.message,
+            f"✅ Bound to `{topic.session_name}`.\n\n"
+            "/rebind — switch to another session\n"
+            "/history — view past messages\n"
+            "/unbind — remove this binding",
+        )
+        return
+
     await safe_reply(
         update.message,
         "🤖 *Claude Code Monitor*\n\n"
