@@ -104,7 +104,7 @@ async def _dispatch(
     instance_id: str,
     user_id: int,
     thread_id: int | None,
-    chat_id: int | None,
+    chat_id: int,
     window_id: str,
 ) -> None:
     match state:
