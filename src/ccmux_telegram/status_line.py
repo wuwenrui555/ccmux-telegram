@@ -60,6 +60,17 @@ async def on_state(instance_id: str, state: ClaudeState, *, bot: Bot) -> None:
     from .runtime import get_topic_by_session_name
 
     topic = get_topic_by_session_name(instance_id)
+
+    # Feed the watcher regardless of whether we render anything to the
+    # user's own topic -- the watcher's dashboard lives in a separate
+    # topic and needs every observation.
+    try:
+        from .watcher import get_service as _get_watcher_service
+
+        _get_watcher_service().process(instance_id, state, topic=topic)
+    except Exception as e:
+        logger.debug("Watcher process error: %s", e)
+
     if topic is None:
         # Instance has no bound Telegram topic; nothing to render.
         return

@@ -2,14 +2,15 @@
 
 Covers:
   - TopicBindings watcher set/get/clear/is_watcher
-  - classify() state machine
+  - classify() with ClaudeState variants
+  - WatcherService.process() state machine
   - tick() aggregates topics + delivers to user's watcher topic (group chat,
     specific thread_id)
-  - Fresh send vs edit: fresh when 🔔 added or its preview changed
+  - Fresh send vs edit: fresh when bell added or its preview changed
   - Cross-chat deep-link format (3-segment with recent message id)
   - /watcher command toggles current topic as watcher
   - on_source_closed: drops entry; clears registration if it IS the watcher
-  - Dead watcher topic → auto-clear
+  - Dead watcher topic -> auto-clear
 """
 
 from __future__ import annotations
@@ -19,28 +20,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ccmux.status_monitor import WindowStatus
-from ccmux.tmux_pane_parser import InteractiveUIContent
-from ccmux.window_bindings import WindowBinding
+from ccmux.api import Blocked, BlockedUI, Dead, Idle, Working
+
 from ccmux_telegram import watcher as W
 from ccmux_telegram.topic_bindings import TopicBinding, TopicBindings
-
-
-def _make_status(
-    *,
-    window_id: str = "@5",
-    window_exists: bool = True,
-    pane_captured: bool = True,
-    status_text: str | None = None,
-    interactive_ui: InteractiveUIContent | None = None,
-) -> WindowStatus:
-    return WindowStatus(
-        window_id=window_id,
-        window_exists=window_exists,
-        pane_captured=pane_captured,
-        status_text=status_text,
-        interactive_ui=interactive_ui,
-    )
 
 
 def _make_topic(
@@ -65,23 +48,24 @@ def _make_topic(
 
 
 class TestClassify:
-    def test_working_when_ellipsis_in_status(self):
-        assert W.classify(_make_status(status_text="Thinking… (3s)")) == "working"
+    def test_working(self) -> None:
+        assert W.classify(Working(status_text="Reading\u2026")) == "working"
 
-    def test_waiting_when_status_past_tense(self):
-        assert W.classify(_make_status(status_text="Sautéed for 5m 46s")) == "waiting"
+    def test_idle(self) -> None:
+        assert W.classify(Idle()) == "waiting"
 
-    def test_working_when_interactive_ui(self):
-        s = _make_status(
-            interactive_ui=InteractiveUIContent(content="...", name="Permission")
+    def test_blocked(self) -> None:
+        assert (
+            W.classify(
+                Blocked(
+                    ui=BlockedUI.PERMISSION_PROMPT, content="Do you want to proceed?"
+                )
+            )
+            == "waiting"
         )
-        assert W.classify(s) == "working"
 
-    def test_waiting_when_no_status(self):
-        assert W.classify(_make_status()) == "waiting"
-
-    def test_none_on_capture_failure(self):
-        assert W.classify(_make_status(pane_captured=False)) is None
+    def test_dead(self) -> None:
+        assert W.classify(Dead()) == "resuming"
 
 
 # ---------------------------------------------------------------------------
@@ -109,26 +93,96 @@ class TestTopicBindingsWatcher:
 
 
 # ---------------------------------------------------------------------------
-# State machine
+# WatcherService.process() state machine
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-class TestWatcherStateMachine:
-    async def test_waiting_after_working(self):
+class TestProcessStateMachine:
+    def test_working_clears_waiting_timer(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccmux_telegram.watcher._topics.is_watcher",
+            lambda uid, tid: False,
+        )
+        svc = W.WatcherService()
+        t = _make_topic()
+        svc.process("proj", Idle(), topic=t)
+        key = (t.user_id, t.thread_id)
+        assert svc._entries[key].current_state == "waiting"
+        assert svc._entries[key].first_waiting_at is not None
+
+        svc.process("proj", Working(status_text="Thinking\u2026"), topic=t)
+        assert svc._entries[key].current_state == "working"
+        assert svc._entries[key].first_waiting_at is None
+
+    def test_idle_starts_waiting_timer(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccmux_telegram.watcher._topics.is_watcher",
+            lambda uid, tid: False,
+        )
+        svc = W.WatcherService()
+        t = _make_topic()
+        before = time.monotonic()
+        svc.process("proj", Idle(), topic=t)
+        entry = svc._entries[(t.user_id, t.thread_id)]
+        assert entry.current_state == "waiting"
+        assert entry.first_waiting_at is not None
+        assert entry.first_waiting_at >= before
+
+    def test_blocked_also_sets_waiting(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccmux_telegram.watcher._topics.is_watcher",
+            lambda uid, tid: False,
+        )
+        svc = W.WatcherService()
+        t = _make_topic()
+        svc.process(
+            "proj",
+            Blocked(ui=BlockedUI.ASK_USER_QUESTION, content="?"),
+            topic=t,
+        )
+        assert svc._entries[(t.user_id, t.thread_id)].current_state == "waiting"
+
+    def test_dead_treated_as_waiting_for_debounce(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccmux_telegram.watcher._topics.is_watcher",
+            lambda uid, tid: False,
+        )
+        svc = W.WatcherService()
+        t = _make_topic()
+        svc.process("proj", Dead(), topic=t)
+        # Collapses into "waiting" bucket so the debounce timer arms.
+        assert svc._entries[(t.user_id, t.thread_id)].current_state == "waiting"
+        assert svc._entries[(t.user_id, t.thread_id)].first_waiting_at is not None
+
+    def test_no_topic_is_dropped(self) -> None:
+        svc = W.WatcherService()
+        svc.process("proj", Idle(), topic=None)
+        assert svc._entries == {}
+
+    def test_watcher_own_topic_is_skipped(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccmux_telegram.watcher._topics.is_watcher",
+            lambda uid, tid: True,
+        )
+        svc = W.WatcherService()
+        svc.process("proj", Idle(), topic=_make_topic())
+        assert svc._entries == {}
+
+    def test_waiting_after_working(self) -> None:
         svc = W.WatcherService()
         topic = _make_topic()
-        svc.process(_make_status(status_text="Thinking… (1s)"), topic=topic)
-        svc.process(_make_status(), topic=topic)
+        with patch.object(W._topics, "is_watcher", return_value=False):
+            svc.process("proj", Working(status_text="Thinking\u2026 (1s)"), topic=topic)
+            svc.process("proj", Idle(), topic=topic)
         entry = svc._entries[(1, 42)]
         assert entry.current_state == "waiting"
         assert entry.first_waiting_at is not None
 
-    async def test_watcher_topic_not_tracked(self):
+    def test_watcher_topic_not_tracked(self) -> None:
         svc = W.WatcherService()
         topic = _make_topic()
         with patch.object(W._topics, "is_watcher", return_value=True):
-            svc.process(_make_status(), topic=topic)
+            svc.process("proj", Idle(), topic=topic)
         assert svc._entries == {}
 
 
@@ -148,7 +202,7 @@ class TestWatcherDashboard:
             patch.object(W._topics, "all", side_effect=lambda: iter([topic])),
             patch.object(W._topics, "get_watcher", return_value=None),
         ):
-            svc.process(_make_status(), topic=topic)
+            svc.process("proj", Idle(), topic=topic)
             svc._entries[(1, 42)].first_waiting_at = (
                 time.monotonic() - W.DEBOUNCE_SECONDS - 1
             )
@@ -170,8 +224,8 @@ class TestWatcherDashboard:
                 W, "_fetch_last_assistant_preview", AsyncMock(return_value="hi")
             ),
         ):
-            svc.process(_make_status(status_text="Thinking… (1s)"), topic=topic)
-            svc.process(_make_status(), topic=topic)
+            svc.process("proj", Working(status_text="Thinking\u2026 (1s)"), topic=topic)
+            svc.process("proj", Idle(), topic=topic)
             svc._entries[(1, 42)].first_waiting_at = (
                 time.monotonic() - W.DEBOUNCE_SECONDS - 1
             )
@@ -199,20 +253,20 @@ class TestWatcherDashboard:
                 W, "_fetch_last_assistant_preview", AsyncMock(return_value="hi")
             ),
         ):
-            svc.process(_make_status(status_text="Thinking… (1s)"), topic=topic)
-            svc.process(_make_status(), topic=topic)
+            svc.process("proj", Working(status_text="Thinking\u2026 (1s)"), topic=topic)
+            svc.process("proj", Idle(), topic=topic)
             svc._entries[(1, 42)].first_waiting_at = (
                 time.monotonic() - W.DEBOUNCE_SECONDS - 1
             )
             await svc.tick(bot)
-            # Back to working → 🔔 removed
-            svc.process(_make_status(status_text="Thinking… (1s)"), topic=topic)
+            # Back to working -> bell removed
+            svc.process("proj", Working(status_text="Thinking\u2026 (1s)"), topic=topic)
             await svc.tick(bot)
         assert bot.send_message.await_count == 1
         assert bot.edit_message_text.await_count == 1
 
     async def test_preview_change_within_waiting_edits_silently(self):
-        # Preview text changing while the same 🔔 stays waiting should NOT
+        # Preview text changing while the same bell stays waiting should NOT
         # re-ping (silent edit). Re-ping only on a new tid appearing.
         svc = W.WatcherService()
         sent1 = MagicMock()
@@ -228,8 +282,8 @@ class TestWatcherDashboard:
                 W, "_fetch_last_assistant_preview", AsyncMock(return_value="first")
             ),
         ):
-            svc.process(_make_status(status_text="Thinking… (1s)"), topic=topic)
-            svc.process(_make_status(), topic=topic)
+            svc.process("proj", Working(status_text="Thinking\u2026 (1s)"), topic=topic)
+            svc.process("proj", Idle(), topic=topic)
             svc._entries[(1, 42)].first_waiting_at = (
                 time.monotonic() - W.DEBOUNCE_SECONDS - 1
             )
@@ -275,8 +329,8 @@ class TestWatcherDashboard:
                 W, "_fetch_last_assistant_preview", AsyncMock(return_value="hi")
             ),
         ):
-            svc.process(_make_status(status_text="Thinking… (1s)"), topic=topic)
-            svc.process(_make_status(), topic=topic)
+            svc.process("proj", Working(status_text="Thinking\u2026 (1s)"), topic=topic)
+            svc.process("proj", Idle(), topic=topic)
             svc._entries[(1, 42)].first_waiting_at = (
                 time.monotonic() - W.DEBOUNCE_SECONDS - 1
             )
@@ -409,6 +463,3 @@ async def test_handle_unbound_topic_refuses_watcher():
     ):
         await handle_unbound_topic(update, context, user, thread_id=7, text="hi")
     mock_reply.assert_awaited_once()
-
-
-_ = WindowBinding

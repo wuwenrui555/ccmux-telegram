@@ -11,7 +11,7 @@ Entry points:
   - watcher_command: the /watcher handler that registers the caller's
     current topic as their dashboard.
   - WatcherService.process: called from status_line.consume_status_one
-    with every observed WindowStatus; updates in-memory state only.
+    with every observed ClaudeState; updates in-memory state only.
   - WatcherService.tick: called once per status batch; performs the
     actual send/edit/delete against Telegram after applying the
     debounce and reconciling against current bindings.
@@ -31,7 +31,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from ccmux.api import get_default_backend
-from ccmux.api import WindowStatus
+from ccmux.api import Blocked, ClaudeState, Dead, Idle, Working
 from .runtime import topics as _topics
 from .util import authorized
 from .sender import NO_LINK_PREVIEW, safe_reply
@@ -77,25 +77,21 @@ def _is_dead_watcher_error(exc: Exception | None) -> bool:
 SourceState = Literal["working", "waiting"]
 
 
-def classify(status: WindowStatus) -> SourceState | None:
-    """Derive a SourceState from a single WindowStatus observation.
+def classify(state: ClaudeState) -> "Literal['working', 'waiting', 'resuming']":
+    """Reduce the four-case ClaudeState to the dashboard's three buckets.
 
-    Returns None for transient observations (pane capture failed, window
-    gone) — caller should leave prior state untouched.
-
-    Claude Code's status line shows `…` (U+2026) only while actively
-    working ("Thinking… (12s)"). Post-completion summaries use past
-    tense with no ellipsis ("Sautéed for 5m 46s"). So the ellipsis is
-    a reliable signal of "currently processing"; anything else — even
-    a non-empty status line — means Claude is idle.
+    Working -> user doesn't need attention. Idle/Blocked -> user's input
+    is needed (typing new prompt for Idle, answering a UI for Blocked).
+    Dead -> session in between states, shown so the user knows why
+    nothing's happening.
     """
-    if not status.window_exists or not status.pane_captured:
-        return None
-    if status.interactive_ui is not None:
-        return "working"
-    if status.status_text is not None and "…" in status.status_text:
-        return "working"
-    return "waiting"
+    match state:
+        case Working(_):
+            return "working"
+        case Idle() | Blocked(_, _):
+            return "waiting"
+        case Dead():
+            return "resuming"
 
 
 @dataclass
@@ -135,25 +131,27 @@ class WatcherService:
     # -------- observation (called per status) --------
 
     def process(
-        self, status: WindowStatus, *, topic: "TopicBinding | None" = None
+        self,
+        instance_id: str,
+        state: ClaudeState,
+        *,
+        topic: "TopicBinding | None" = None,
     ) -> None:
-        """Update in-memory state from a single WindowStatus observation.
+        """Update in-memory state from a single ClaudeState observation.
 
-        The consumer resolves window_id → topic and passes it in;
-        observations for unbound windows are dropped here. Does no
-        Telegram I/O — tick() renders/edits the dashboard after the
-        status batch.
+        The consumer resolves instance_id -> topic and passes it in;
+        observations for unbound instances are dropped here. Does no
+        Telegram I/O -- tick() renders/edits the dashboard after the
+        observation.
         """
         if topic is None or topic.thread_id is None:
             return
-        # Skip the watcher topic itself — it's the dashboard destination,
+        # Skip the watcher topic itself -- it's the dashboard destination,
         # not a monitored source.
         if _topics.is_watcher(topic.user_id, topic.thread_id):
             return
 
-        new_state = classify(status)
-        if new_state is None:
-            return  # transient, keep prior state
+        new_state = classify(state)
 
         key = (topic.user_id, topic.thread_id)
         entry = self._entries.get(key)
@@ -161,10 +159,10 @@ class WatcherService:
             entry = _SourceEntry(source_thread_id=topic.thread_id)
             self._entries[key] = entry
 
-        if new_state == "waiting":
+        if new_state in ("waiting", "resuming"):
             if entry.current_state == "working":
                 entry.first_waiting_at = time.monotonic()
-            entry.current_state = "waiting"
+            entry.current_state = "waiting"  # collapse resuming -> waiting bucket
         else:  # "working"
             entry.current_state = "working"
             entry.first_waiting_at = None
@@ -460,18 +458,16 @@ async def _fetch_last_assistant_preview(session_name: str) -> str:
     except RuntimeError:
         return _FALLBACK_PREVIEW
 
-    # Find the source topic by session_name → WindowBinding → session_id.
-    from .runtime import get_topic_by_session_name, windows
+    from .runtime import windows
 
-    topic = get_topic_by_session_name(session_name)
-    if topic is None or not topic.window_id:
-        return _FALLBACK_PREVIEW
-    window = windows.get(topic.window_id)
-    if window is None or not window.claude_session_id:
+    instance = windows.get(
+        session_name
+    )  # primary getter by instance_id == session_name
+    if instance is None or not instance.session_id:
         return _FALLBACK_PREVIEW
 
     try:
-        messages = await backend.claude.get_history(window.claude_session_id)
+        messages = await backend.claude.get_history(instance.session_id)
     except Exception as e:
         logger.debug("Watcher preview fetch failed: %s", e)
         return _FALLBACK_PREVIEW
