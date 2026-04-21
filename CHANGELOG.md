@@ -6,6 +6,17 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 2.1.1 — 2026-04-21
+
+### Fixed
+
+- `status_line._dispatch` declared `chat_id: int | None` but then
+  passed that parameter into `enqueue_status_update` which requires
+  `int`. The only caller (`on_state`) reads `chat_id` from
+  `topic.group_chat_id` which is always `int`, so the permissive
+  annotation was a lie and pyright rejected the CI build. Tighten
+  the parameter to `int`.
+
 ## 2.1.0 — 2026-04-21
 
 ### Added
