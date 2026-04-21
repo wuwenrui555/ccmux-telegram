@@ -19,7 +19,6 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from . import tool_context
 from .runtime import get_topic
 from ccmux.api import BlockedUI, extract_interactive_content, tmux_registry
 from .util import get_thread_id, get_tm_and_window
@@ -164,13 +163,10 @@ async def handle_interactive_ui(
     # Build message with navigation keyboard.
     keyboard = _build_interactive_keyboard(window_id, ui_name=ui_name)
 
-    # Prepend cached tool_context (Edit diff, Bash command, etc.).
-    cached = tool_context.get_pending(window_id)
-    if cached is not None:
-        header = tool_context.format_input_for_ui(cached.tool_name, cached.input)
-        if header:
-            text = f"{header}\n\n{text}"
-
+    # The extracted content already carries the tool-preview block from
+    # the pane (Claude renders `<Tool name>\n<Tool call>\n\nDo you want
+    # to proceed?` as a single region, which the parser's walkback
+    # captures). No JSONL lookup needed — see drop-tool-context.
     thread_kwargs: dict[str, int] = {}
     if thread_id is not None:
         thread_kwargs["message_thread_id"] = thread_id

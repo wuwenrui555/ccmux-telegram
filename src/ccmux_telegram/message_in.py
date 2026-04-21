@@ -29,7 +29,6 @@ from .prompt_state import (
 from .markdown import convert_markdown_tables
 from .sender import split_message
 from .message_queue import enqueue_content_message, get_message_queue
-from . import tool_context
 
 logger = logging.getLogger(__name__)
 
@@ -180,12 +179,6 @@ async def handle_new_message(instance_id: str, msg: ClaudeMessage, bot: Bot) -> 
         if handled:
             return
         clear_interactive_mode(user_id, thread_id)
-
-    # Maintain pending tool_use cache for permission-prompt UI injection.
-    if msg.content_type == "tool_use" and msg.tool_use_id and msg.tool_name:
-        await tool_context.record(msg, wid)
-    elif msg.content_type == "tool_result" and msg.tool_use_id:
-        tool_context.clear(wid, msg.tool_use_id)
 
     # Any non-interactive message means the interaction is complete
     if get_interactive_msg_id(user_id, thread_id):
