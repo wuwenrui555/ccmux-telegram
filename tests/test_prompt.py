@@ -3,6 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from ccmux.api import BlockedUI
+from telegram.error import BadRequest
 
 from ccmux_telegram.prompt import (
     _build_interactive_keyboard,
@@ -72,6 +74,65 @@ class TestHandleInteractiveUI:
         assert call_kwargs.kwargs["chat_id"] == 100
         assert call_kwargs.kwargs["message_thread_id"] == 42
         assert call_kwargs.kwargs["reply_markup"] is not None
+
+    @pytest.mark.asyncio
+    async def test_edit_not_modified_is_treated_as_success(self, mock_bot: AsyncMock):
+        """Telegram's 'message is not modified' is a no-op success, not
+        a failure -- edge-triggered dispatch already prevents most
+        duplicates, but keep this defensive path so a stray identical
+        edit does not pop state and re-send.
+        """
+        from ccmux_telegram.prompt_state import set_interactive_msg_id
+
+        window_id = "@5"
+        user_id = 1
+        thread_id = 42
+        set_interactive_msg_id(user_id, 12345, thread_id)
+
+        mock_bot.edit_message_text.side_effect = BadRequest(
+            "Message is not modified: specified new message content"
+        )
+
+        result = await handle_interactive_ui(
+            mock_bot,
+            user_id=user_id,
+            window_id=window_id,
+            thread_id=thread_id,
+            chat_id=100,
+            ui=BlockedUI.PERMISSION_PROMPT,
+            content="Do you want to proceed?",
+        )
+
+        assert result is True
+        mock_bot.edit_message_text.assert_called_once()
+        mock_bot.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_edit_other_bad_request_falls_back_to_send(self, mock_bot: AsyncMock):
+        """A BadRequest that is NOT 'not modified' should still pop state
+        and fall back to a fresh send."""
+        from ccmux_telegram.prompt_state import set_interactive_msg_id
+
+        window_id = "@5"
+        user_id = 1
+        thread_id = 42
+        set_interactive_msg_id(user_id, 12345, thread_id)
+
+        mock_bot.edit_message_text.side_effect = BadRequest("Message to edit not found")
+
+        result = await handle_interactive_ui(
+            mock_bot,
+            user_id=user_id,
+            window_id=window_id,
+            thread_id=thread_id,
+            chat_id=100,
+            ui=BlockedUI.PERMISSION_PROMPT,
+            content="Do you want to proceed?",
+        )
+
+        assert result is True
+        mock_bot.edit_message_text.assert_called_once()
+        mock_bot.send_message.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handle_no_ui_returns_false(self, mock_bot: AsyncMock):

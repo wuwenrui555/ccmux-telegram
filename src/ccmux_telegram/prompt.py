@@ -16,6 +16,7 @@ import asyncio
 import logging
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from . import tool_context
@@ -186,6 +187,19 @@ async def handle_interactive_ui(
             )
             set_interactive_mode(user_id, window_id, thread_id)
             return True
+        except BadRequest as e:
+            # "message is not modified" means the payload is identical
+            # to what's already on Telegram -- a no-op success, not a
+            # failure. Don't pop state or re-send; that would spam.
+            if "not modified" in str(e).lower():
+                set_interactive_mode(user_id, window_id, thread_id)
+                return True
+            logger.debug(
+                "Edit failed for interactive msg %s (%s), sending new",
+                existing_msg_id,
+                e,
+            )
+            pop_interactive_state(user_id, thread_id)
         except Exception:
             logger.debug(
                 "Edit failed for interactive msg %s, sending new", existing_msg_id

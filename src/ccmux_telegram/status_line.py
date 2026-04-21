@@ -54,8 +54,10 @@ async def on_state(instance_id: str, state: ClaudeState, *, bot: Bot) -> None:
     when it needs the tmux handle.
     """
     # Always update the cache first so downstream consumers see the
-    # latest observed state even if we early-return below.
-    get_state_cache().update(instance_id, state)
+    # latest observed state even if we early-return below. The return
+    # value edge-triggers dispatch so the backend's per-tick re-emit
+    # does not spam identical Telegram payloads.
+    changed = get_state_cache().update(instance_id, state)
 
     from .runtime import get_topic_by_session_name
 
@@ -73,6 +75,11 @@ async def on_state(instance_id: str, state: ClaudeState, *, bot: Bot) -> None:
 
     if topic is None:
         # Instance has no bound Telegram topic; nothing to render.
+        return
+
+    if not changed:
+        # State identical to last observation; skip dispatch to avoid
+        # re-sending the same keyboard / status line every fast tick.
         return
 
     user_id = topic.user_id
