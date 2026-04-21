@@ -295,23 +295,32 @@ async def handle_permission_callback(
     assert user
     data = query.data
 
+    # Ack the callback up front. The creation flow below can take several
+    # seconds (hook timeout wait, state writes); without an early ack the
+    # Telegram client treats the button as pending and can redeliver the
+    # callback, producing a duplicate handler invocation.
+    await query.answer()
+
+    # Atomic claim on the session name. The first delivery gets "test",
+    # subsequent stale deliveries get None and bail silently so they
+    # cannot overwrite the first handler's success UI.
+    session_name = (
+        context.user_data.pop(SESSION_NAME_KEY, None) if context.user_data else None
+    )
+    if not session_name:
+        return
+
     pending_tid = (
         context.user_data.get(PENDING_THREAD_ID_KEY) if context.user_data else None
     )
     if pending_tid is None:
         pending_tid = get_thread_id(update)
-    clear_permission_picker_state(context.user_data)
     selected_path = (
-        context.user_data.get(SELECTED_PATH_KEY, str(Path.cwd()))
+        context.user_data.pop(SELECTED_PATH_KEY, str(Path.cwd()))
         if context.user_data
         else str(Path.cwd())
     )
-    session_name = (
-        context.user_data.get(SESSION_NAME_KEY, "") if context.user_data else ""
-    )
-    if context.user_data is not None:
-        context.user_data.pop(SELECTED_PATH_KEY, None)
-        context.user_data.pop(SESSION_NAME_KEY, None)
+    clear_permission_picker_state(context.user_data)
 
     skip_permissions = data == CB_PERM_SKIP
 

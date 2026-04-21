@@ -29,6 +29,7 @@ from .prompt_state import (
 from .markdown import convert_markdown_tables
 from .sender import split_message
 from .message_queue import enqueue_content_message, get_message_queue
+from . import tool_context
 
 logger = logging.getLogger(__name__)
 
@@ -180,16 +181,24 @@ async def handle_new_message(msg: ClaudeMessage, bot: Bot) -> None:
             return
         clear_interactive_mode(user_id, thread_id)
 
+    # Maintain pending tool_use cache for permission-prompt UI injection.
+    if msg.content_type == "tool_use" and msg.tool_use_id and msg.tool_name:
+        await tool_context.record(msg, wid)
+    elif msg.content_type == "tool_result" and msg.tool_use_id:
+        tool_context.clear(wid, msg.tool_use_id)
+
     # Any non-interactive message means the interaction is complete
     if get_interactive_msg_id(user_id, thread_id):
         await clear_interactive_msg(
             user_id, bot, thread_id, chat_id=topic.group_chat_id
         )
 
-    # Skip tool call notifications when CCMUX_SHOW_TOOL_CALLS=false
-    if not config.show_tool_calls and msg.content_type in (
-        "tool_use",
-        "tool_result",
+    # Skip tool call notifications when CCMUX_SHOW_TOOL_CALLS=false,
+    # unless the tool name is on CCMUX_TOOL_CALLS_ALLOWLIST (default: "Skill").
+    if (
+        not config.show_tool_calls
+        and msg.content_type in ("tool_use", "tool_result")
+        and msg.tool_name not in config.tool_calls_allowlist
     ):
         return
 
@@ -197,6 +206,18 @@ async def handle_new_message(msg: ClaudeMessage, bot: Bot) -> None:
     # these blocks have empty content (CC only records a signature),
     # so suppressing them just removes a placeholder.
     if not config.show_thinking and msg.content_type == "thinking":
+        return
+
+    # Claude Code injects the full skill body as a plain user-role text
+    # message (not a tool_result) that always starts with
+    # "Base directory for this skill:". Suppress it when
+    # CCMUX_SHOW_SKILL_BODIES=false.
+    if (
+        not config.show_skill_bodies
+        and msg.role == "user"
+        and msg.content_type == "text"
+        and msg.text.lstrip().startswith("Base directory for this skill:")
+    ):
         return
 
     parts = build_response_parts(
