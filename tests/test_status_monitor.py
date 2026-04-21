@@ -1,199 +1,215 @@
-"""Tests for the status producer/consumer split.
+"""Tests for status_line.on_state — ClaudeState to Telegram translator."""
 
-Covers both sides:
-  - StatusMonitor._observe: returns raw WindowStatus observations.
-  - consume_statuses: translates WindowStatus into Telegram actions.
-"""
+from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
-from ccmux_telegram.status_line import consume_statuses
-from ccmux.status_monitor import StatusMonitor, WindowStatus
-from ccmux.tmux_pane_parser import InteractiveUIContent
+from ccmux.api import Blocked, BlockedUI, Dead, Idle, Working
+
+from ccmux_telegram.state_cache import get_state_cache
+from ccmux_telegram.status_line import on_state
+
+
+# ---- Fakes ----------------------------------------------------------------
+
+
+@dataclass
+class _FakeBot:
+    """Minimal telegram.Bot double; records calls but returns safe defaults."""
+
+    calls: list[tuple[str, dict]] = field(default_factory=list)
+
+    async def edit_message_text(self, **kwargs: Any) -> None:
+        self.calls.append(("edit_message_text", kwargs))
+
+    async def send_message(self, **kwargs: Any) -> Any:
+        self.calls.append(("send_message", kwargs))
+
+        @dataclass
+        class _Sent:
+            message_id: int = 0
+
+        return _Sent()
+
+
+# ---- Fixtures -------------------------------------------------------------
 
 
 @pytest.fixture
-def mock_bot():
-    bot = AsyncMock()
-    sent_msg = MagicMock()
-    sent_msg.message_id = 999
-    bot.send_message.return_value = sent_msg
-    return bot
+def fresh_cache():
+    """Reset the shared state cache between tests."""
+    cache = get_state_cache()
+    cache._data.clear()  # noqa: SLF001  — test-only reset
+    yield cache
+    cache._data.clear()
 
 
 @pytest.fixture
-def _clear_interactive_state():
-    """Ensure interactive state is clean before and after each test."""
-    from ccmux_telegram.prompt_state import _interactive_mode, _interactive_msgs
+def topic_binding(monkeypatch):
+    """Register a fake topic so get_topic_by_session_name returns something."""
 
-    _interactive_mode.clear()
-    _interactive_msgs.clear()
-    yield
-    _interactive_mode.clear()
-    _interactive_msgs.clear()
+    @dataclass
+    class _FakeTopic:
+        user_id: int = 1
+        thread_id: int = 42
+        group_chat_id: int = 100
+        window_id: str = "@7"
+        session_name: str = "alpha"
+
+    fake = _FakeTopic()
+    monkeypatch.setattr(
+        "ccmux_telegram.runtime.get_topic_by_session_name",
+        lambda instance_id: fake if instance_id == "alpha" else None,
+    )
+    return fake
 
 
-def _make_binding(window_id: str = "@5", thread_id: int = 42, chat_id: int = 100):
-    b = MagicMock()
-    b.window_id = window_id
-    b.user_id = 1
-    b.thread_id = thread_id
-    b.group_chat_id = chat_id
-    return b
+# ---- Tests ----------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("_clear_interactive_state")
-class TestStatusMonitorObserve:
-    """StatusMonitor._observe produces correct WindowStatus from raw pane text."""
-
+class TestOnStateUpdatesCache:
     @pytest.mark.asyncio
-    async def test_settings_pane_produces_interactive_ui(
-        self, sample_pane_settings: str
-    ):
-        window_id = "@5"
-        mock_window = MagicMock()
-        mock_window.window_id = window_id
+    async def test_cache_updates_even_when_no_topic_bound(
+        self, fresh_cache, monkeypatch
+    ) -> None:
+        """State cache must update for every instance, even ones with no
+        topic binding, so future binding queries see the observation."""
+        monkeypatch.setattr(
+            "ccmux_telegram.runtime.get_topic_by_session_name",
+            lambda instance_id: None,
+        )
+        bot = _FakeBot()
 
-        mock_registry = MagicMock()
-        mock_tm = MagicMock()
-        mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
-        mock_tm.capture_pane = AsyncMock(return_value=sample_pane_settings)
-        mock_registry.get_by_window_id.return_value = mock_tm
+        await on_state("orphan", Working(status_text="Reading\u2026"), bot=bot)
 
-        monitor = StatusMonitor(tmux_registry=mock_registry)
-        status = await monitor._observe(_make_binding(window_id))
+        assert fresh_cache.get("orphan") is not None
+        assert isinstance(fresh_cache.get("orphan"), Working)
+        # No telegram calls for orphan instances.
+        assert bot.calls == []
 
-        assert status.window_exists is True
-        assert status.pane_captured is True
-        assert status.interactive_ui is not None
-        assert "Select model" in status.interactive_ui.content
 
+class TestWorking:
     @pytest.mark.asyncio
-    async def test_normal_pane_no_interactive_ui(self):
-        window_id = "@5"
-        mock_window = MagicMock()
-        mock_window.window_id = window_id
-        normal_pane = (
-            "some output\n"
-            "✻ Reading file\n"
-            "──────────────────────────────────────\n"
-            "❯ \n"
-            "──────────────────────────────────────\n"
-            "  [Opus 4.6] Context: 50%\n"
+    async def test_working_enqueues_status(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        calls: list[tuple] = []
+
+        async def fake_enqueue(
+            bot, user_id, window_id, text, *, thread_id=None, chat_id=None
+        ):
+            calls.append((user_id, window_id, text, thread_id, chat_id))
+
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.enqueue_status_update", fake_enqueue
+        )
+        bot = _FakeBot()
+
+        await on_state("alpha", Working(status_text="Reading file\u2026"), bot=bot)
+
+        assert calls == [(1, "@7", "Reading file\u2026", 42, 100)]
+
+
+class TestIdle:
+    @pytest.mark.asyncio
+    async def test_idle_clears_interactive_when_bound(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        cleared: list[tuple] = []
+
+        async def fake_clear(user_id, bot, thread_id, *, chat_id):
+            cleared.append((user_id, thread_id, chat_id))
+
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.clear_interactive_msg", fake_clear
+        )
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.get_interactive_window",
+            lambda user_id, thread_id: "@7",
         )
 
-        mock_registry = MagicMock()
-        mock_tm = MagicMock()
-        mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
-        mock_tm.capture_pane = AsyncMock(return_value=normal_pane)
-        mock_registry.get_by_window_id.return_value = mock_tm
+        await on_state("alpha", Idle(), bot=_FakeBot())
 
-        monitor = StatusMonitor(tmux_registry=mock_registry)
-        status = await monitor._observe(_make_binding(window_id))
-
-        assert status.window_exists is True
-        assert status.pane_captured is True
-        assert status.interactive_ui is None
-
-
-@pytest.mark.usefixtures("_clear_interactive_state")
-class TestConsumeStatuses:
-    """consume_statuses translates WindowStatus into bot API calls."""
+        assert cleared == [(1, 42, 100)]
 
     @pytest.mark.asyncio
-    async def test_interactive_ui_triggers_handler(self, mock_bot: AsyncMock):
-        status = WindowStatus(
-            window_id="@5",
-            window_exists=True,
-            pane_captured=True,
-            status_text=None,
-            interactive_ui=InteractiveUIContent(
-                content="Select model …", name="Settings"
-            ),
+    async def test_idle_skips_clear_when_interactive_is_elsewhere(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        cleared: list[tuple] = []
+
+        async def fake_clear(*args, **kwargs):
+            cleared.append((args, kwargs))
+
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.clear_interactive_msg", fake_clear
         )
-        topic = _make_binding("@5")
-
-        with (
-            patch(
-                "ccmux_telegram.runtime.get_topic_by_window_id",
-                return_value=topic,
-            ),
-            patch(
-                "ccmux_telegram.status_line.handle_interactive_ui",
-                new_callable=AsyncMock,
-            ) as mock_handle_ui,
-        ):
-            mock_handle_ui.return_value = True
-            await consume_statuses(mock_bot, [status])
-
-        mock_handle_ui.assert_called_once_with(mock_bot, 1, "@5", 42, chat_id=100)
-
-    @pytest.mark.asyncio
-    async def test_no_interactive_ui_no_handler(self, mock_bot: AsyncMock):
-        status = WindowStatus(
-            window_id="@5",
-            window_exists=True,
-            pane_captured=True,
-            status_text=None,
-            interactive_ui=None,
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.get_interactive_window",
+            lambda user_id, thread_id: "@other",
         )
-        topic = _make_binding("@5")
 
-        with (
-            patch(
-                "ccmux_telegram.runtime.get_topic_by_window_id",
-                return_value=topic,
-            ),
-            patch(
-                "ccmux_telegram.status_line.handle_interactive_ui",
-                new_callable=AsyncMock,
-            ) as mock_handle_ui,
-            patch(
-                "ccmux_telegram.status_line.enqueue_status_update",
-                new_callable=AsyncMock,
-            ),
-        ):
-            await consume_statuses(mock_bot, [status])
+        await on_state("alpha", Idle(), bot=_FakeBot())
 
-        mock_handle_ui.assert_not_called()
+        assert cleared == []
 
+
+class TestBlocked:
     @pytest.mark.asyncio
-    async def test_settings_ui_end_to_end_sends_keyboard(
-        self, mock_bot: AsyncMock, sample_pane_settings: str
-    ):
-        """Full path: producer observes Settings pane, consumer sends keyboard."""
-        window_id = "@5"
-        mock_window = MagicMock()
-        mock_window.window_id = window_id
+    async def test_blocked_calls_handle_interactive_ui(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        calls: list[dict] = []
 
-        topic = _make_binding(window_id)
-
-        mock_registry_poll = MagicMock()
-        mock_tm_poll = MagicMock()
-        mock_tm_poll.find_window_by_id = AsyncMock(return_value=mock_window)
-        mock_tm_poll.capture_pane = AsyncMock(return_value=sample_pane_settings)
-        mock_registry_poll.get_by_window_id.return_value = mock_tm_poll
-
-        with (
-            patch("ccmux_telegram.prompt.tmux_registry") as mock_registry_ui,
-            patch("ccmux_telegram.prompt.get_topic"),
-            patch("ccmux_telegram.runtime.get_topic_by_window_id", return_value=topic),
+        async def fake_handle(
+            bot, user_id, window_id, thread_id, *, chat_id, ui, content
         ):
-            mock_tm_ui = MagicMock()
-            mock_tm_ui.find_window_by_id = AsyncMock(return_value=mock_window)
-            mock_tm_ui.capture_pane = AsyncMock(return_value=sample_pane_settings)
-            mock_tm_ui.send_keys = AsyncMock(return_value=True)
-            mock_registry_ui.get_by_window_id.return_value = mock_tm_ui
+            calls.append(
+                {
+                    "user_id": user_id,
+                    "window_id": window_id,
+                    "thread_id": thread_id,
+                    "chat_id": chat_id,
+                    "ui": ui,
+                    "content": content,
+                }
+            )
+            return True
 
-            monitor = StatusMonitor(tmux_registry=mock_registry_poll)
-            status = await monitor._observe(_make_binding(window_id))
-            await consume_statuses(mock_bot, [status])
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.handle_interactive_ui", fake_handle
+        )
 
-        mock_bot.send_message.assert_called_once()
-        call_kwargs = mock_bot.send_message.call_args.kwargs
-        assert call_kwargs["chat_id"] == 100
-        assert call_kwargs["message_thread_id"] == 42
-        assert call_kwargs["reply_markup"] is not None
-        assert "Select model" in call_kwargs["text"]
+        await on_state(
+            "alpha",
+            Blocked(ui=BlockedUI.PERMISSION_PROMPT, content="Do you want to proceed?"),
+            bot=_FakeBot(),
+        )
+
+        assert len(calls) == 1
+        assert calls[0]["ui"] is BlockedUI.PERMISSION_PROMPT
+        assert calls[0]["content"] == "Do you want to proceed?"
+
+
+class TestDead:
+    @pytest.mark.asyncio
+    async def test_dead_enqueues_resuming_status(
+        self, fresh_cache, topic_binding, monkeypatch
+    ) -> None:
+        calls: list[tuple] = []
+
+        async def fake_enqueue(
+            bot, user_id, window_id, text, *, thread_id=None, chat_id=None
+        ):
+            calls.append((user_id, window_id, text))
+
+        monkeypatch.setattr(
+            "ccmux_telegram.status_line.enqueue_status_update", fake_enqueue
+        )
+
+        await on_state("alpha", Dead(), bot=_FakeBot())
+
+        assert calls == [(1, "@7", "Resuming session\u2026")]

@@ -20,7 +20,7 @@ from telegram.ext import ContextTypes
 
 from . import tool_context
 from .runtime import get_topic
-from ccmux.api import extract_interactive_content, tmux_registry
+from ccmux.api import BlockedUI, extract_interactive_content, tmux_registry
 from .util import get_thread_id, get_tm_and_window
 from .callback_data import (
     CB_ASK_DOWN,
@@ -50,10 +50,15 @@ def _build_interactive_keyboard(
 ) -> InlineKeyboardMarkup:
     """Build keyboard for interactive UI navigation.
 
-    `ui_name` controls the layout: `RestoreCheckpoint` omits ←/→ keys
-    since only vertical selection is needed.
+    `ui_name` controls the layout: `restore_checkpoint` omits ←/→ keys
+    since only vertical selection is needed. Accepts the BlockedUI
+    value string (e.g. 'restore_checkpoint') or the legacy PascalCase
+    name; both compared case-insensitively.
     """
-    vertical_only = ui_name == "RestoreCheckpoint"
+    vertical_only = ui_name.lower() in {
+        "restore_checkpoint",
+        "restorecheckpoint",
+    }
 
     rows: list[list[InlineKeyboardButton]] = []
     # Row 1: directional keys
@@ -113,57 +118,62 @@ async def handle_interactive_ui(
     window_id: str,
     thread_id: int | None = None,
     chat_id: int | None = None,
+    *,
+    ui: "BlockedUI | None" = None,
+    content: str | None = None,
 ) -> bool:
-    """Capture terminal and send interactive UI content to user.
+    """Render a blocking UI to Telegram.
 
-    Handles AskUserQuestion, ExitPlanMode, Permission Prompt, and
-    RestoreCheckpoint UIs. Returns True if UI was detected and sent,
-    False otherwise.
+    If `ui` + `content` are provided (e.g. by the `on_state` consumer),
+    they are used directly. Otherwise the function falls back to
+    capturing the pane itself via the tmux_registry (legacy callers,
+    primarily the refresh callback).
     """
     if chat_id is None:
-        return False  # Can't send without a destination chat
-    tm = tmux_registry.get_by_window_id(window_id)
-    if not tm:
-        return False
-    w = await tm.find_window_by_id(window_id)
-    if not w:
         return False
 
-    # Capture plain text (no ANSI colors)
-    pane_text = await tm.capture_pane(w.window_id)
-    if not pane_text:
-        logger.debug("No pane text captured for window_id %s", window_id)
-        return False
+    # Fast path: caller already has the parsed UI.
+    if ui is not None and content is not None:
+        ui_name = ui.value
+        text = content
+    else:
+        # Legacy path: capture pane and extract. Kept for callback
+        # refresh handlers that do not carry a ClaudeState.
+        tm = tmux_registry.get_by_window_id(window_id)
+        if not tm:
+            return False
+        w = await tm.find_window_by_id(window_id)
+        if not w:
+            return False
+        pane_text = await tm.capture_pane(w.window_id)
+        if not pane_text:
+            logger.debug("No pane text captured for window_id %s", window_id)
+            return False
+        extracted = extract_interactive_content(pane_text)
+        if not extracted:
+            logger.debug(
+                "No interactive UI detected in window_id %s (last 3 lines: %s)",
+                window_id,
+                pane_text.strip().split("\n")[-3:],
+            )
+            return False
+        ui_name = extracted.ui.value
+        text = extracted.content
 
-    content = extract_interactive_content(pane_text)
-    if not content:
-        logger.debug(
-            "No interactive UI detected in window_id %s (last 3 lines: %s)",
-            window_id,
-            pane_text.strip().split("\n")[-3:],
-        )
-        return False
+    # Build message with navigation keyboard.
+    keyboard = _build_interactive_keyboard(window_id, ui_name=ui_name)
 
-    # Build message with navigation keyboard
-    keyboard = _build_interactive_keyboard(window_id, ui_name=content.name)
-
-    # Send as plain text (no markdown conversion)
-    text = content.content
-
-    # Prepend cached tool_context (Edit diff, Bash command, etc.) so the
-    # user can decide without scrolling back for the preceding tool_use.
+    # Prepend cached tool_context (Edit diff, Bash command, etc.).
     cached = tool_context.get_pending(window_id)
     if cached is not None:
         header = tool_context.format_input_for_ui(cached.tool_name, cached.input)
         if header:
             text = f"{header}\n\n{text}"
 
-    # Build thread kwargs for send_message
     thread_kwargs: dict[str, int] = {}
     if thread_id is not None:
         thread_kwargs["message_thread_id"] = thread_id
 
-    # Check if we have an existing interactive message to edit
     existing_msg_id = get_interactive_msg_id(user_id, thread_id)
     if existing_msg_id:
         try:
@@ -177,14 +187,11 @@ async def handle_interactive_ui(
             set_interactive_mode(user_id, window_id, thread_id)
             return True
         except Exception:
-            # Edit failed (message deleted, etc.) - clear stale msg_id and send new
             logger.debug(
                 "Edit failed for interactive msg %s, sending new", existing_msg_id
             )
             pop_interactive_state(user_id, thread_id)
-            # Fall through to send new message
 
-    # Send new message (plain text — terminal content is not markdown)
     logger.info(
         "Sending interactive UI to user %d for window_id %s", user_id, window_id
     )
