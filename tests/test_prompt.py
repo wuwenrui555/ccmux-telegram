@@ -8,6 +8,7 @@ from telegram.error import BadRequest
 
 from ccmux_telegram.prompt import (
     _build_interactive_keyboard,
+    _format_blocked_content,
     handle_interactive_ui,
 )
 from ccmux_telegram.callback_data import (
@@ -157,6 +158,52 @@ class TestHandleInteractiveUI:
 
         assert result is False
         mock_bot.send_message.assert_not_called()
+
+
+class TestFormatBlockedContent:
+    """Heuristic Markdown styling for extracted pane content.
+
+    The rules are deliberately simple so wrong matches produce plain
+    text, not malformed MarkdownV2. Test the four rules independently
+    plus the realistic permission-prompt composition.
+    """
+
+    def test_first_nonblank_line_is_bold(self):
+        result = _format_blocked_content("Read file\n\n  Read(/etc/hosts)\n")
+        assert result.startswith("**Read file**")
+
+    def test_question_line_is_bold(self):
+        text = "Read file\n\n  Read(/foo)\n\n Do you want to proceed?\n"
+        result = _format_blocked_content(text)
+        assert "**Read file**" in result
+        assert "** Do you want to proceed?**" in result
+
+    def test_selected_option_is_bold(self):
+        text = "Pick one\n\n ❯ 1. Yes, default\n   2. No, cancel\n Esc to cancel\n"
+        result = _format_blocked_content(text)
+        assert "** ❯ 1. Yes, default**" in result
+        # Unselected option stays plain.
+        assert "\n   2. No, cancel\n" in result
+
+    def test_footer_is_italic(self):
+        text = "Read file\n\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend\n"
+        result = _format_blocked_content(text)
+        assert "_ Esc to cancel · Tab to amend_" in result
+
+    def test_enter_to_footer_is_italic(self):
+        text = "Enable auto mode?\n\n ❯ 1. Yes\n   2. No\n\n Enter to confirm · Esc to cancel\n"
+        result = _format_blocked_content(text)
+        assert "_ Enter to confirm · Esc to cancel_" in result
+
+    def test_plain_lines_stay_plain(self):
+        """Lines that are neither title, question, selected option, nor
+        footer must not gain any markdown markers."""
+        text = "Read file\n\n  Read(/etc/hosts)\n  — allow reading from etc/\n"
+        result = _format_blocked_content(text)
+        # The tool-call line and description line are not decorated.
+        assert "  Read(/etc/hosts)\n  — allow reading from etc/" in result
+        # But the title line is still bolded.
+        assert "**Read file**" in result
 
 
 class TestKeyboardLayoutForSettings:

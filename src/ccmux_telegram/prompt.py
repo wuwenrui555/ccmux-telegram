@@ -14,11 +14,13 @@ Provides:
 
 import asyncio
 import logging
+import re
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
+from .markdown import convert_markdown
 from .runtime import get_topic
 from ccmux.api import BlockedUI, extract_interactive_content, tmux_registry
 from .util import get_thread_id, get_tm_and_window
@@ -33,7 +35,7 @@ from .callback_data import (
     CB_ASK_TAB,
     CB_ASK_UP,
 )
-from .sender import NO_LINK_PREVIEW
+from .sender import NO_LINK_PREVIEW, PARSE_MODE
 from .prompt_state import (
     get_interactive_msg_id,
     pop_interactive_state,
@@ -42,6 +44,63 @@ from .prompt_state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Footer lines that Claude renders at the bottom of a blocking UI —
+# styled as italic so the directional/action hint visually recedes
+# below the actionable content.
+_FOOTER_HINT_RE = re.compile(r"^\s*(Esc to |Enter to )")
+# The caret that marks the currently-selected option; bold the full
+# line so Telegram users see their next-press target at a glance.
+_SELECTED_OPTION_RE = re.compile(r"^\s*❯\s+")
+
+
+def _format_blocked_content(text: str) -> str:
+    """Apply heuristic Markdown to raw pane content before MarkdownV2 render.
+
+    Rules, line-by-line:
+
+    - The first non-empty line is the tool title or the question
+      (``Read file``, ``Bash command``, ``Enable auto mode?``, ``Do you
+      want to proceed?``). Bold it.
+    - Any subsequent line ending with ``?`` is also a question header
+      (e.g. `Do you want to proceed?` inside a tool-preview block). Bold.
+    - Lines starting with ``❯`` are the currently-selected option.
+      Bold the whole line.
+    - Lines starting with ``Esc to `` / ``Enter to `` are the footer
+      hint bar. Render italic.
+
+    Heuristics only — we do not parse structure. The rules are chosen to
+    be safe when they miss (a plain-text line stays plain text).
+    """
+    lines = text.split("\n")
+    styled: list[str] = []
+    first_nonblank_done = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            styled.append(line)
+            continue
+
+        if not first_nonblank_done:
+            styled.append(f"**{line.rstrip()}**")
+            first_nonblank_done = True
+            continue
+
+        if _SELECTED_OPTION_RE.match(line):
+            styled.append(f"**{line.rstrip()}**")
+            continue
+
+        if _FOOTER_HINT_RE.match(line):
+            styled.append(f"_{line.rstrip()}_")
+            continue
+
+        if stripped.endswith("?"):
+            styled.append(f"**{line.rstrip()}**")
+            continue
+
+        styled.append(line)
+    return "\n".join(styled)
 
 
 def _build_interactive_keyboard(
@@ -167,6 +226,8 @@ async def handle_interactive_ui(
     # the pane (Claude renders `<Tool name>\n<Tool call>\n\nDo you want
     # to proceed?` as a single region, which the parser's walkback
     # captures). No JSONL lookup needed — see drop-tool-context.
+    rendered_text = convert_markdown(_format_blocked_content(text))
+
     thread_kwargs: dict[str, int] = {}
     if thread_id is not None:
         thread_kwargs["message_thread_id"] = thread_id
@@ -177,8 +238,9 @@ async def handle_interactive_ui(
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=existing_msg_id,
-                text=text,
+                text=rendered_text,
                 reply_markup=keyboard,
+                parse_mode=PARSE_MODE,
                 link_preview_options=NO_LINK_PREVIEW,
             )
             set_interactive_mode(user_id, window_id, thread_id)
@@ -208,8 +270,9 @@ async def handle_interactive_ui(
     try:
         sent = await bot.send_message(
             chat_id=chat_id,
-            text=text,
+            text=rendered_text,
             reply_markup=keyboard,
+            parse_mode=PARSE_MODE,
             link_preview_options=NO_LINK_PREVIEW,
             **thread_kwargs,  # type: ignore[arg-type]
         )
