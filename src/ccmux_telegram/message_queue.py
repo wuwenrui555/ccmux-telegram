@@ -88,21 +88,6 @@ _status_msg_info: dict[tuple[int, int], tuple[int, str, str]] = {}
 # to drop intermediate ticks of the one-second status counter.
 _status_last_enqueue: dict[tuple[int, int], float] = {}
 
-# Track the most recent content message_id the bot has sent into each bound
-# topic. The watcher uses this to build deep-links that land the user near
-# the latest activity rather than on the topic's creation message.
-_last_content_msg_ids: dict[tuple[int, int], int] = {}
-
-
-def record_last_content_msg(user_id: int, thread_id: int, message_id: int) -> None:
-    """Update the last-content message_id for a (user, topic) pair."""
-    _last_content_msg_ids[(user_id, thread_id)] = message_id
-
-
-def get_last_content_msg(user_id: int, thread_id: int) -> int | None:
-    """Return the most recent recorded content message_id, or None."""
-    return _last_content_msg_ids.get((user_id, thread_id))
-
 
 # Flood control: chat_id -> monotonic time when ban expires.
 # Keyed by chat_id because Telegram rate limits are per-chat, not per-user.

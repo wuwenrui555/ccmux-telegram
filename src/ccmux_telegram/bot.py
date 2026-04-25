@@ -12,7 +12,6 @@ Delegates all real work to sub-modules:
   - ui.history: /history command and pagination callbacks
 """
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -48,7 +47,6 @@ from . import binding_lifecycle
 from . import command_basic as commands
 from . import command_history as history_mod
 from . import prompt
-from . import watcher as _watcher
 from .callback_data import (
     CB_ASK_DOWN,
     CB_ASK_ENTER,
@@ -86,8 +84,6 @@ logger = logging.getLogger(__name__)
 
 # Background backend (owns the fast/slow poll loops internally)
 _backend: DefaultBackend | None = None
-_watcher_tick_task: asyncio.Task[None] | None = None
-_WATCHER_TICK_INTERVAL = 1.0  # seconds; debounce-granularity floor
 
 # Claude Code commands shown in bot menu (forwarded via tmux)
 CC_COMMANDS: dict[str, str] = {
@@ -194,7 +190,6 @@ async def post_init(application: Application) -> None:
         BotCommand("unbind", "Unbind topic from session (keeps window running)"),
         BotCommand("rebind", "Unbind and pick a different session"),
         BotCommand("usage", "Show Claude Code usage remaining"),
-        BotCommand("watcher", "Mark this topic as the waiting-topics dashboard"),
     ]
     for cmd_name, desc in CC_COMMANDS.items():
         bot_commands.append(BotCommand(cmd_name, desc))
@@ -239,34 +234,10 @@ async def post_init(application: Application) -> None:
     await backend.start(on_state=_on_state, on_message=_on_message)
     logger.info("Backend started")
 
-    # Watcher tick: debounced notification dispatch for the dashboard topic.
-    async def _watcher_tick_loop() -> None:
-        service = _watcher.get_service()
-        while True:
-            try:
-                await service.tick(bot)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.debug("Watcher tick error: %s", e)
-            await asyncio.sleep(_WATCHER_TICK_INTERVAL)
-
-    global _watcher_tick_task
-    _watcher_tick_task = asyncio.create_task(_watcher_tick_loop())
-    logger.info("Watcher tick loop started (interval: %ss)", _WATCHER_TICK_INTERVAL)
-
 
 async def post_shutdown(application: Application) -> None:
     """Stop polling loops, queue workers."""
-    global _backend, _watcher_tick_task
-
-    if _watcher_tick_task is not None:
-        _watcher_tick_task.cancel()
-        try:
-            await _watcher_tick_task
-        except asyncio.CancelledError:
-            pass
-        _watcher_tick_task = None
+    global _backend
 
     if _backend is not None:
         await _backend.stop()
@@ -305,7 +276,6 @@ def create_bot(backend: DefaultBackend | None = None) -> Application:
     application.add_handler(CommandHandler("unbind", commands.unbind_command))
     application.add_handler(CommandHandler("rebind", commands.rebind_command))
     application.add_handler(CommandHandler("usage", commands.usage_command))
-    application.add_handler(CommandHandler("watcher", _watcher.watcher_command))
     application.add_handler(CommandHandler("sweep", commands.sweep_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window

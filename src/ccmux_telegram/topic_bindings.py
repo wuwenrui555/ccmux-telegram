@@ -58,10 +58,6 @@ class TopicBindings:
         self._state_file = state_file if state_file is not None else config.state_file
         # in-memory mirror: (user_id, thread_id) -> (session_name, group_chat_id)
         self._raw_state: dict[tuple[int, int], tuple[str, int]] = {}
-        # user_id -> (group_chat_id, thread_id) of the user's watcher topic.
-        # Watcher delivers the dashboard to this topic. Group topics have
-        # proper unread-badge + notification semantics, unlike bot DMs.
-        self._watchers: dict[int, tuple[int, int]] = {}
         self._read_state_file()
 
     # ------------------------------------------------------------------
@@ -86,6 +82,7 @@ class TopicBindings:
             logger.warning("topic_bindings.json root is not a dict, ignoring")
             return
 
+        had_legacy_meta = False
         for user_key, topics in raw.items():
             if not isinstance(topics, dict):
                 continue
@@ -96,7 +93,8 @@ class TopicBindings:
 
             for thread_key, entry in topics.items():
                 if thread_key == "_meta":
-                    self._load_user_meta(user_id, entry)
+                    # Legacy watcher key — drop it; a re-save below cleans the file.
+                    had_legacy_meta = True
                     continue
                 if not isinstance(entry, dict):
                     continue
@@ -114,22 +112,12 @@ class TopicBindings:
 
         logger.info("Loaded %d topic(s) from topic_bindings.json", len(self._raw_state))
 
-    def _load_user_meta(self, user_id: int, meta: Any) -> None:
-        """Parse the optional `_meta` block under a user in the state file."""
-        if not isinstance(meta, dict):
-            return
-        watcher = meta.get("watcher")
-        if isinstance(watcher, dict):
-            chat_id = watcher.get("group_chat_id")
-            tid = watcher.get("thread_id")
-            if isinstance(chat_id, int) and isinstance(tid, int):
-                self._watchers[user_id] = (chat_id, tid)
-            return
-        # Any previous dm-only schema is ignored; user re-runs /watcher in
-        # the topic they want as dashboard.
+        if had_legacy_meta:
+            logger.info("Stripping legacy _meta.watcher entries from state file")
+            self._save_state_file()
 
     def _save_state_file(self) -> None:
-        """Persist `_raw_state` + `_watchers` to `topic_bindings.json`."""
+        """Persist `_raw_state` to `topic_bindings.json`."""
         state: dict[str, dict[str, dict[str, Any]]] = {}
 
         for (user_id, thread_id), (
@@ -140,12 +128,6 @@ class TopicBindings:
             state.setdefault(user_key, {})[str(thread_id)] = {
                 "tmux_session_name": session_name,
                 "group_chat_id": group_chat_id,
-            }
-
-        for user_id, (chat_id, tid) in self._watchers.items():
-            user_key = str(user_id)
-            state.setdefault(user_key, {})["_meta"] = {
-                "watcher": {"group_chat_id": chat_id, "thread_id": tid}
             }
 
         atomic_write_json(self._state_file, state)
@@ -256,33 +238,3 @@ class TopicBindings:
         from .state_cache import get_state_cache
 
         return get_state_cache().is_alive(topic.session_name)
-
-    # ------------------------------------------------------------------
-    # Watcher registration (group-topic dashboard)
-    # ------------------------------------------------------------------
-
-    def set_watcher(self, user_id: int, group_chat_id: int, thread_id: int) -> None:
-        """Register a topic as the user's watcher dashboard and persist."""
-        self._watchers[user_id] = (group_chat_id, thread_id)
-        self._save_state_file()
-        logger.info(
-            "Watcher set for user %d: chat=%d thread=%d",
-            user_id,
-            group_chat_id,
-            thread_id,
-        )
-
-    def get_watcher(self, user_id: int) -> tuple[int, int] | None:
-        """Return (chat_id, thread_id) of the user's watcher, or None."""
-        return self._watchers.get(user_id)
-
-    def clear_watcher(self, user_id: int) -> None:
-        if user_id in self._watchers:
-            del self._watchers[user_id]
-            self._save_state_file()
-            logger.info("Watcher cleared for user %d", user_id)
-
-    def is_watcher(self, user_id: int, thread_id: int) -> bool:
-        """True if (user, thread) is the currently registered watcher topic."""
-        w = self._watchers.get(user_id)
-        return w is not None and w[1] == thread_id

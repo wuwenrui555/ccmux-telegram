@@ -132,10 +132,6 @@ async def _process_content_task(bot: Bot, user_id: int, task: _mq.MessageTask) -
     if last_msg_id and task.tool_use_id and task.content_type == "tool_use":
         _mq._tool_msg_ids[(task.tool_use_id, user_id, tid)] = last_msg_id
 
-    # 4. Record last content message_id for watcher deep-links
-    if last_msg_id is not None and task.thread_id is not None:
-        _mq.record_last_content_msg(user_id, task.thread_id, last_msg_id)
-
     # 4. Send images if present (from tool_result with base64 image blocks)
     await _send_task_images(bot, chat_id, task)
 

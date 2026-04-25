@@ -264,26 +264,3 @@ class TestEdgeTriggeredDispatch:
         await on_state("alpha", Working(status_text="Writing\u2026"), bot=_FakeBot())
 
         assert calls == [(1, "Reading\u2026"), (1, "Writing\u2026")]
-
-    @pytest.mark.asyncio
-    async def test_watcher_receives_every_observation(
-        self, fresh_cache, topic_binding, monkeypatch
-    ) -> None:
-        """Watcher must see every tick, not just state changes -- its
-        dashboard needs the full observation stream."""
-        observed: list[tuple] = []
-
-        class _FakeService:
-            def process(self, instance_id, state, *, topic):
-                observed.append((instance_id, state))
-
-        monkeypatch.setattr(
-            "ccmux_telegram.watcher.get_service", lambda: _FakeService()
-        )
-
-        state = Idle()
-        await on_state("alpha", state, bot=_FakeBot())
-        await on_state("alpha", state, bot=_FakeBot())
-        await on_state("alpha", state, bot=_FakeBot())
-
-        assert len(observed) == 3
