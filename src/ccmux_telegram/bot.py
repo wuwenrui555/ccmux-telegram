@@ -186,8 +186,11 @@ async def post_init(application: Application) -> None:
 
     bot_commands = [
         BotCommand("start", "Show welcome message"),
-        BotCommand("history", "Message history for this topic"),
         BotCommand("esc", "Send Escape to interrupt Claude"),
+        BotCommand("bar", "Show Claude's status bar"),
+        BotCommand("text", "Capture current tmux pane as plain text"),
+        BotCommand("sweep", "Delete this topic's bot commands and replies"),
+        BotCommand("history", "Message history for this topic"),
         BotCommand("unbind", "Unbind topic from session (keeps window running)"),
         BotCommand("rebind", "Unbind and pick a different session"),
         BotCommand("usage", "Show Claude Code usage remaining"),
@@ -297,11 +300,13 @@ def create_bot(backend: DefaultBackend | None = None) -> Application:
     application.add_handler(CommandHandler("start", commands.start_command))
     application.add_handler(CommandHandler("history", history_mod.history_command))
     application.add_handler(CommandHandler("text", commands.text_command))
+    application.add_handler(CommandHandler("bar", commands.bar_command))
     application.add_handler(CommandHandler("esc", commands.esc_command))
     application.add_handler(CommandHandler("unbind", commands.unbind_command))
     application.add_handler(CommandHandler("rebind", commands.rebind_command))
     application.add_handler(CommandHandler("usage", commands.usage_command))
     application.add_handler(CommandHandler("watcher", _watcher.watcher_command))
+    application.add_handler(CommandHandler("sweep", commands.sweep_command))
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — auto-kill associated window
     application.add_handler(

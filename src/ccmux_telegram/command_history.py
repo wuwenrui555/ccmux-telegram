@@ -18,6 +18,7 @@ from .topic_bindings import TopicBinding
 from .util import authorized, get_thread_id
 from .callback_data import CB_HISTORY_NEXT, CB_HISTORY_PREV
 from .sender import safe_edit, safe_reply, safe_send, split_message
+from .sweep import sweep_tracked
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,7 @@ async def send_history(
 
 
 @authorized()
+@sweep_tracked
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show message history for the bound topic."""
     user = update.effective_user
