@@ -20,7 +20,6 @@ from .picker import PENDING_THREAD_ID_KEY, PENDING_THREAD_TEXT_KEY
 from .util import authorized, get_thread_id, get_tm_and_window
 from .message_queue import clear_status_msg_info, clear_tool_msg_ids_for_topic
 from .prompt import clear_interactive_msg
-from .watcher import get_service as _get_watcher_service
 
 logger = logging.getLogger(__name__)
 
@@ -64,25 +63,13 @@ async def clear_topic_state(
 async def topic_closed_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle topic closure — clear in-memory state only; binding is preserved.
-
-    Also tells the watcher service to stop tracking this topic (drop any
-    live dashboard message). If the closed topic IS the registered watcher,
-    the watcher registration itself is cleared.
-    """
+    """Handle topic closure — clear in-memory state only; binding is preserved."""
     user = update.effective_user
     assert user
 
     thread_id = get_thread_id(update)
     if thread_id is None:
         return
-
-    # Tell the watcher service first — this also handles the case where the
-    # closed topic IS the watcher itself.
-    try:
-        await _get_watcher_service().on_source_closed(context.bot, user.id, thread_id)
-    except Exception as e:
-        logger.debug("Watcher on_source_closed error: %s", e)
 
     topic = get_topic(user.id, thread_id)
     if topic:
