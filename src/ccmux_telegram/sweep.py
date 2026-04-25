@@ -18,7 +18,7 @@ from __future__ import annotations
 import contextvars
 import logging
 from functools import wraps
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable, Coroutine
 
 from telegram import Bot, Update
 from telegram.ext import ContextTypes
@@ -63,23 +63,24 @@ async def sweep_messages(bot: Bot, user_id: int, thread_id: int, chat_id: int) -
     return deleted
 
 
-HandlerFn = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[Any]]
+HandlerFn = Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]
 
 
 def sweep_tracked(fn: HandlerFn) -> HandlerFn:
     """Decorator: log the command message id and enable auto-tracking for replies."""
 
     @wraps(fn)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Any:
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         msg = update.message
         if user is None or msg is None:
-            return await fn(update, context)
+            await fn(update, context)
+            return
         thread_id = get_thread_id(update) or 0
         track_msg(user.id, thread_id, msg.message_id)
         token = _ACTIVE.set((user.id, thread_id))
         try:
-            return await fn(update, context)
+            await fn(update, context)
         finally:
             _ACTIVE.reset(token)
 
