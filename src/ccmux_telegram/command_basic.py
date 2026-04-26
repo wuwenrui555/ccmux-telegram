@@ -23,8 +23,49 @@ from .util import authorized, get_thread_id, get_tm_and_window
 from .binding_lifecycle import clear_topic_state
 from .picker import clear_browse_state
 from .sender import safe_reply
+from .sweep import sweep_messages, sweep_tracked
 
 logger = logging.getLogger(__name__)
+
+# Chrome separator: a `────` line spanning most of the terminal width that
+# marks the top of Claude Code's prompt box + status bar. Short decorative
+# dividers inside UI bodies are well under 20 chars, so this threshold is
+# safe.
+_CHROME_SEPARATOR_MIN_LEN = 20
+_CHROME_SEARCH_WINDOW = 10
+
+
+def _find_chrome_separators(lines: list[str]) -> list[int]:
+    """Indices of all `────` chrome separator lines within the last window of lines.
+
+    Claude Code's TUI renders two separators at the bottom of the pane: one
+    above the prompt box and one between the prompt box and the status bar.
+    """
+    search_start = max(0, len(lines) - _CHROME_SEARCH_WINDOW)
+    return [
+        i
+        for i in range(search_start, len(lines))
+        if len(lines[i].strip()) >= _CHROME_SEPARATOR_MIN_LEN
+        and all(c == "─" for c in lines[i].strip())
+    ]
+
+
+def _strip_pane_chrome(text: str) -> str:
+    """Drop Claude Code's bottom prompt box + status bar from a pane capture."""
+    lines = text.splitlines()
+    seps = _find_chrome_separators(lines)
+    if seps:
+        lines = lines[: seps[0]]
+    return "\n".join(lines).rstrip()
+
+
+def _extract_pane_chrome(text: str) -> str:
+    """Return only Claude Code's status bar (content below the last `────` separator)."""
+    lines = text.splitlines()
+    seps = _find_chrome_separators(lines)
+    if not seps:
+        return ""
+    return "\n".join(lines[seps[-1] + 1 :]).rstrip()
 
 
 @authorized(notify=True)
@@ -71,6 +112,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 @authorized()
+@sweep_tracked
 async def text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Capture the current tmux pane and send it as plain text."""
     user = update.effective_user
@@ -109,6 +151,8 @@ async def text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_reply(update.message, "❌ Failed to capture pane content.")
         return
 
+    text = _strip_pane_chrome(text)
+
     # Wrap in code block for monospace display
     if len(text) > 4000:
         text = text[-4000:]
@@ -118,7 +162,57 @@ async def text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             text = text[nl + 1 :]
     # Break up triple backticks to avoid breaking MarkdownV2 code blocks
     text = text.replace("```", "` ` `")
-    await safe_reply(update.message, f"```\n{text}\n```")
+    # Explicit `text` language prevents Telegram's client-side auto-detection
+    # (which otherwise highlights TUI captures as Python).
+    await safe_reply(update.message, f"```text\n{text}\n```")
+
+
+@authorized()
+@sweep_tracked
+async def bar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Capture just Claude Code's bottom chrome (prompt box + status bar)."""
+    user = update.effective_user
+    assert user
+    if not update.message:
+        return
+
+    thread_id = get_thread_id(update)
+    topic = get_topic(user.id, thread_id)
+    if not topic:
+        await safe_reply(update.message, "❌ No session bound to this topic.")
+        return
+    if not _topics.is_alive(topic):
+        await safe_reply(
+            update.message,
+            f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
+            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+        )
+        return
+    if not topic.window_id:
+        await safe_reply(update.message, "❌ No session bound to this topic.")
+        return
+
+    pair = await get_tm_and_window(topic.window_id)
+    if not pair:
+        await safe_reply(
+            update.message,
+            f"❌ Session '{topic.session_name}' window no longer exists.",
+        )
+        return
+    tm, w = pair
+
+    raw = await tm.capture_pane(w.window_id)
+    if not raw:
+        await safe_reply(update.message, "❌ Failed to capture pane content.")
+        return
+
+    chrome = _extract_pane_chrome(raw)
+    if not chrome:
+        await safe_reply(update.message, "❌ No chrome separator found in pane.")
+        return
+
+    chrome = chrome.replace("```", "` ` `")
+    await safe_reply(update.message, f"```text\n{chrome}\n```")
 
 
 @authorized()
@@ -211,6 +305,7 @@ async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 @authorized()
+@sweep_tracked
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Fetch Claude Code usage stats from TUI and send to Telegram."""
     user = update.effective_user
@@ -270,3 +365,19 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if len(trimmed) > 3000:
             trimmed = trimmed[:3000] + "\n... (truncated)"
         await safe_reply(update.message, f"```\n{trimmed}\n```")
+
+
+@authorized()
+@sweep_tracked
+async def sweep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Delete this user's bot-command messages and replies in the current topic."""
+    user = update.effective_user
+    assert user
+    if not update.message:
+        return
+
+    thread_id = get_thread_id(update) or 0
+    chat_id = update.message.chat_id
+    # The decorator already registered this /sweep message for deletion,
+    # so it gets cleaned up along with everything else.
+    await sweep_messages(context.bot, user.id, thread_id, chat_id)

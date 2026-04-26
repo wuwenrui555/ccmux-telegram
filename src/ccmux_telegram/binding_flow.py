@@ -234,20 +234,7 @@ async def handle_unbound_topic(
     thread_id: int,
     text: str,
 ) -> None:
-    """Handle first message in an unbound topic — show tmux session picker.
-
-    Short-circuits when this topic is the user's registered watcher: that
-    topic is reserved for dashboard delivery and must not be bound.
-    """
-    if _topics.is_watcher(user.id, thread_id):
-        if update.message is not None:
-            await safe_reply(
-                update.message,
-                "🔔 这是值班员 (watcher) topic，不会绑定 Claude session。\n"
-                "在其它 topic 里开始对话，idle 事件会汇总到这里。",
-            )
-        return
-
+    """Handle first message in an unbound topic — show tmux session picker."""
     filter_mode = "unbound"
     msg_text, keyboard, session_list, _ = _build_picker_for_filter(filter_mode)
     logger.debug(

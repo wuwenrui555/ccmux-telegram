@@ -25,6 +25,7 @@ from telegram import Bot, InputMediaPhoto, LinkPreviewOptions, Message
 from telegram.error import RetryAfter
 
 from .markdown import convert_markdown
+from .sweep import track_active
 
 logger = logging.getLogger(__name__)
 
@@ -115,10 +116,14 @@ async def send_photo(
 
 
 async def safe_reply(message: Message, text: str, **kwargs: Any) -> Message:
-    """Reply with formatting, falling back to plain text on failure."""
+    """Reply with formatting, falling back to plain text on failure.
+
+    If called inside a `@sweep_tracked` handler, the outgoing message id is
+    registered against the active topic so `/sweep` can delete it later.
+    """
     kwargs.setdefault("link_preview_options", NO_LINK_PREVIEW)
     try:
-        return await message.reply_text(
+        sent = await message.reply_text(
             _ensure_formatted(text),
             parse_mode=PARSE_MODE,
             **kwargs,
@@ -127,12 +132,14 @@ async def safe_reply(message: Message, text: str, **kwargs: Any) -> Message:
         raise
     except Exception:
         try:
-            return await message.reply_text(text, **kwargs)
+            sent = await message.reply_text(text, **kwargs)
         except RetryAfter:
             raise
         except Exception as e:
             logger.error(f"Failed to reply: {e}")
             raise
+    track_active(sent.message_id)
+    return sent
 
 
 async def safe_edit(target: Any, text: str, **kwargs: Any) -> None:
@@ -161,13 +168,18 @@ async def safe_send(
     text: str,
     message_thread_id: int | None = None,
     **kwargs: Any,
-) -> None:
-    """Send message with formatting, falling back to plain text on failure."""
+) -> Message | None:
+    """Send message with formatting, falling back to plain text on failure.
+
+    Returns the sent Message on success. Auto-registers the id with the
+    sweep log when called inside a `@sweep_tracked` handler.
+    """
     kwargs.setdefault("link_preview_options", NO_LINK_PREVIEW)
     if message_thread_id is not None:
         kwargs.setdefault("message_thread_id", message_thread_id)
+    sent: Message | None = None
     try:
-        await bot.send_message(
+        sent = await bot.send_message(
             chat_id=chat_id,
             text=_ensure_formatted(text),
             parse_mode=PARSE_MODE,
@@ -177,11 +189,14 @@ async def safe_send(
         raise
     except Exception:
         try:
-            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+            sent = await bot.send_message(chat_id=chat_id, text=text, **kwargs)
         except RetryAfter:
             raise
         except Exception as e:
             logger.error(f"Failed to send message to {chat_id}: {e}")
+    if sent is not None:
+        track_active(sent.message_id)
+    return sent
 
 
 # --- Message splitting ---

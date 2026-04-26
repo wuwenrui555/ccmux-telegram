@@ -5,7 +5,7 @@ fast tick. Consumers that need "is this instance alive?" or edge
 detection maintain the cache themselves.
 
 This module is the single in-process cache shared by every consumer
-that cares (topic_bindings.is_alive, watcher, status_line).
+that cares (topic_bindings.is_alive, status_line).
 """
 
 from __future__ import annotations
