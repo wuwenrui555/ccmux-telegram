@@ -6,6 +6,29 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 3.1.0 — 2026-04-25
+
+### Added
+
+- Bot-relayed messages from Telegram now carry a `[from ccmux]`
+  prefix in the Claude Code JSONL transcript so it's possible to
+  tell at a glance which user-role entries originated from the
+  Telegram bridge versus direct keystrokes typed into the tmux
+  pane. Applied at the three relay paths (`text_handler`,
+  `photo_handler`, `voice_handler`) before `dispatch_text`. The
+  echo path back to Telegram (`build_response_parts` for
+  `role == "user"`) strips the prefix so the user-facing
+  rendering stays clean.
+- New module `ccmux_telegram.relay_tag` exposes
+  `RELAY_TAG_PREFIX`, `tag_relayed`, and `strip_relay_tag` for the
+  prepend / strip pair. `tests/test_relay_tag.py` covers
+  round-trip identity, partial-match safety, and empty input.
+
+  Slash commands forwarded to Claude Code (`/clear`, `/cost`, …)
+  are intentionally NOT tagged: they're CC TUI commands, never
+  reach JSONL, and a leading `[from ccmux]` would also break
+  CC's `/`-prefix recognition.
+
 ## 3.0.0 — 2026-04-25
 
 ### Removed (BREAKING)
