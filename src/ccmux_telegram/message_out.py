@@ -28,6 +28,7 @@ from .bash_capture import cancel_bash_capture, start_bash_capture
 from .binding_flow import handle_text_in_picker_state, handle_unbound_topic
 from .message_dispatch import dispatch_text
 from .prompt import handle_interactive_ui
+from .relay_tag import tag_relayed
 from .sender import safe_reply
 from .prompt_state import get_interactive_window
 from .message_queue import clear_status_msg_info, enqueue_status_update
@@ -215,7 +216,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         chat_id=topic.group_chat_id,
         message_id=update.message.message_id,
         window_id=wid,
-        text=text,
+        text=tag_relayed(text),
     )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
@@ -319,7 +320,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         chat_id=topic.group_chat_id,
         message_id=update.message.message_id,
         window_id=wid,
-        text=text_to_send,
+        text=tag_relayed(text_to_send),
     )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
@@ -417,7 +418,7 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         chat_id=topic.group_chat_id,
         message_id=update.message.message_id,
         window_id=wid,
-        text=text,
+        text=tag_relayed(text),
     )
     if not success:
         await safe_reply(update.message, f"❌ {message}")
