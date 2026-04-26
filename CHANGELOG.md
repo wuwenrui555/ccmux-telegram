@@ -6,6 +6,67 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 3.0.0 — 2026-04-25
+
+### Removed (BREAKING)
+
+- The `/watcher` dashboard command and its underlying
+  `WatcherService` are removed. The "who's waiting for you"
+  aggregator topic feature was unused; every wire that fed it
+  (background tick loop, status-line process hook, topic-close
+  notification, deep-link message-id tracking, persistent watcher
+  registration in `topic_bindings.json`) is gone with it. Users
+  who had registered a watcher topic see one orphan
+  `_meta.watcher` key in their `topic_bindings.json`; on next
+  startup `_read_state_file` strips it and re-saves the file
+  cleanly.
+
+### Added
+
+- `/text` — capture the current tmux pane as plain text. Strips
+  Claude Code's chrome (prompt box + status bar) before sending so
+  the user sees only the conversational pane content. Forces the
+  Telegram code-fence language to `text` to suppress client-side
+  Python auto-highlighting on TUI captures.
+- `/bar` — capture only Claude Code's status bar (the pane content
+  below the last `────` chrome separator). Useful for grabbing the
+  spinner / token meter without the surrounding noise.
+- `/sweep` — delete this topic's bot-owned commands and their
+  replies. Tracking is opt-in via a new `@sweep_tracked` decorator
+  combined with a `contextvars.ContextVar` wired into
+  `safe_reply` / `safe_send`, so any reply produced inside a
+  decorated handler is auto-registered for sweep. Currently
+  applied to `/text`, `/bar`, `/history`, `/usage`, and `/sweep`
+  itself.
+
+### Changed
+
+- Telegram menu order is rebuilt around the new commands: `/start`,
+  `/esc`, `/bar`, `/text`, `/sweep`, `/history`, `/unbind`,
+  `/rebind`, `/usage`, then the forwarded Claude Code commands.
+- `sender.safe_send` now returns `Message | None` instead of
+  `None`, so the sweep log can pick up the outgoing message id.
+- `sweep_tracked`'s handler type is `Callable[..., Coroutine[Any,
+  Any, None]]` instead of `Callable[..., Awaitable[Any]]`, matching
+  what `python-telegram-bot`'s `CommandHandler` expects.
+- `ccmux` dependency upper bound is raised: `>=3.0.0,<4.0.0`.
+  Backend v3 is the env-var-namespace BREAKING release; the
+  frontend doesn't read those vars itself, so no code change was
+  needed beyond the constraint.
+
+### Docs
+
+- README rewritten end-to-end to match the conventions established
+  in `ccmux-backend` (badges, Prerequisites section, numbered
+  Usage steps, audience-specific bullet sections, NOTE callouts
+  with `GitHub - owner/repo` link text only for cross-repo
+  redirects). Reflects the current command surface (no /watcher,
+  yes /text /bar /sweep) and adds a State files section listing
+  what the frontend writes under `$CCMUX_DIR`.
+- README's "Run" step explicitly tells the operator to launch the
+  bot inside a tmux session matching `CCMUX_TMUX_SESSION_NAME` so
+  the backend excludes the bot's own pane from the binding picker.
+
 ## 2.3.0 — 2026-04-21
 
 ### Added
