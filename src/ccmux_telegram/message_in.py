@@ -28,6 +28,7 @@ from .prompt_state import (
 from .markdown import convert_markdown_tables
 from .sender import split_message
 from .message_queue import enqueue_content_message, get_message_queue
+from .relay_tag import strip_relay_tag
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,9 @@ def build_response_parts(
     if role == "user":
         prefix = "👤 "
         separator = ""
+        # Strip the [from ccmux] relay tag so Telegram echoes look clean
+        # even though the JSONL keeps the tag for debugging.
+        text = strip_relay_tag(text)
         # User messages are typically short, no special processing needed
         if len(text) > 3000:
             text = text[:3000] + "…"

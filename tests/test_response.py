@@ -9,6 +9,16 @@ class TestBuildResponseParts:
         assert len(parts) == 1
         assert "\U0001f464" in parts[0]
 
+    def test_user_message_strips_relay_tag(self):
+        """[from ccmux] prefix lives in JSONL for debug; Telegram echo
+        should be clean."""
+        parts = build_response_parts(
+            "[from ccmux] hello", is_complete=True, role="user"
+        )
+        assert len(parts) == 1
+        assert "[from ccmux]" not in parts[0]
+        assert parts[0].endswith("hello")
+
     def test_user_message_truncated_at_3000_chars(self):
         long_text = "a" * 4000
         parts = build_response_parts(long_text, is_complete=True, role="user")
