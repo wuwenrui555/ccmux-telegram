@@ -12,9 +12,10 @@ Each topic binds to one tmux window. Messages you send in the topic go to Claude
 ## Prerequisites
 
 - Python ≥3.12
+- [`uv`](https://docs.astral.sh/uv/) for installing the CLIs
 - [`tmux`](https://tmux.github.io/)
 - [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) (the `claude` CLI)
-- [ccmux-backend] — pulled in transitively when you install this package; provides the `ccmux hook` CLI
+- [ccmux-backend] — cloned side-by-side with this repo at install time (see [Installation](#installation)). It is the runtime library this bot imports (tmux orchestration, JSONL parsing, session tracking) and also ships the `ccmux hook` CLI used during setup.
 - A Telegram bot token from [@BotFather](https://t.me/BotFather), in a group/supergroup with **Topics enabled**
 - (Optional) An [OpenAI API key](https://platform.openai.com/api-keys) for voice-message transcription
 
@@ -43,9 +44,26 @@ These commands are relayed verbatim into the tmux window via `send_keys`. The Te
 - `/memory` — edit `CLAUDE.md`
 - `/model` — switch AI model
 
-## Usage
+## Installation
 
-### 1. Install the ccmux hook
+### 1. Clone and install
+
+`ccmux-telegram` depends on `ccmux-backend` via a relative path (`../ccmux-backend`), so the two repos must be cloned as **siblings**. The parent directory can be anywhere; only the directory names `ccmux-backend` and `ccmux-telegram` need to stay as-is.
+
+```bash
+# Parent dir is your choice; ~/ccmux shown as an example.
+mkdir -p ~/ccmux && cd ~/ccmux
+git clone https://github.com/wuwenrui555/ccmux-backend.git
+git clone https://github.com/wuwenrui555/ccmux-telegram.git
+
+# Install both as editable uv tools.
+uv tool install --editable ./ccmux-backend    # exposes the `ccmux` CLI
+uv tool install --editable ./ccmux-telegram   # exposes the `ccmux-telegram` CLI
+```
+
+`uv tool install` only puts the tool's own entry points on `PATH`, so backend and frontend each need their own `uv tool install`. Both are installed editable, so a later `git pull` is enough to pick up code changes (see [Upgrade](#upgrade)).
+
+### 2. Install the ccmux hook
 
 > [!NOTE]
 > The `ccmux hook` CLI ships with the backend. See [GitHub - wuwenrui555/ccmux-backend](https://github.com/wuwenrui555/ccmux-backend) for what the hook does and which state files it writes.
@@ -54,7 +72,7 @@ These commands are relayed verbatim into the tmux window via `send_keys`. The Te
 ccmux hook --install
 ```
 
-### 2. Configure
+### 3. Configure environment
 
 Create `~/.ccmux/.env` with at minimum:
 
@@ -64,7 +82,9 @@ ALLOWED_USERS=your_telegram_user_id[,another_user_id]
 OPENAI_API_KEY=...   # optional, for voice transcription
 ```
 
-### 3. Run
+See [Environment variables](#environment-variables) for the full list.
+
+### 4. Run
 
 Run the bot inside a tmux session named `__ccmux__` (or whatever `CCMUX_TMUX_SESSION_NAME` is set to). The backend skips that session when scanning for Claude windows, so the bot's own pane never shows up as a binding candidate. tmux also lets the bot survive shell disconnects.
 
@@ -74,6 +94,28 @@ ccmux-telegram
 ```
 
 In your Telegram supergroup (with Topics enabled), create a topic and send `/start` (or any message) to trigger the session picker.
+
+### Autostart
+
+> [!NOTE]
+> TODO: package a systemd user unit (Linux) and a LaunchAgent plist (macOS) so the bot starts automatically after reboot. For now, the bot has to be re-launched manually inside `__ccmux__` after each reboot or `tmux kill-server`.
+
+### Upgrade
+
+Both tools are installed editable, so a `git pull` is enough for source-code changes:
+
+```bash
+git -C ~/ccmux/ccmux-backend pull
+git -C ~/ccmux/ccmux-telegram pull
+```
+
+When a `pyproject.toml` changes (new or bumped dependency), reinstall the affected tool:
+
+```bash
+uv tool install --reinstall --editable ~/ccmux/ccmux-backend
+# and/or
+uv tool install --reinstall --editable ~/ccmux/ccmux-telegram
+```
 
 ## Environment variables
 
