@@ -95,11 +95,6 @@ ccmux-telegram
 
 In your Telegram supergroup (with Topics enabled), create a topic and send `/start` (or any message) to trigger the session picker.
 
-### Autostart
-
-> [!NOTE]
-> TODO: package a systemd user unit (Linux) and a LaunchAgent plist (macOS) so the bot starts automatically after reboot. For now, the bot has to be re-launched manually inside `__ccmux__` after each reboot or `tmux kill-server`.
-
 ### Upgrade
 
 Both tools are installed editable, so a `git pull` is enough for source-code changes:
