@@ -6,6 +6,26 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 3.1.1 — 2026-04-27
+
+### Changed
+
+- README now has a real `Installation` section walking through the
+  side-by-side clone of `ccmux-backend` and `ccmux-telegram` and the
+  two `uv tool install --editable` commands needed to expose both
+  CLIs (the backend provides `ccmux`, the frontend provides
+  `ccmux-telegram`). Previously the README only described the
+  post-install steps (`ccmux hook --install`, `.env`, `tmux`) and
+  implied the package would be pulled transitively, which doesn't
+  work because the `ccmux` dependency is resolved via a
+  `tool.uv.sources` relative path and is not on PyPI.
+- Prerequisites bullet for `ccmux-backend` rewritten to describe the
+  side-by-side clone and to make clear that `ccmux-backend` is the
+  runtime library this bot imports, not just the home of the
+  `ccmux hook` CLI.
+- Added an `Autostart` placeholder noting that a systemd user unit
+  (Linux) and LaunchAgent plist (macOS) are TODO.
+
 ## 3.1.0 — 2026-04-25
 
 ### Added
