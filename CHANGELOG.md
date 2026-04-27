@@ -6,6 +6,17 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 3.1.2 — 2026-04-27
+
+### Removed
+
+- `Autostart` placeholder dropped from the `Installation` section
+  in the README. v3.1.1 added a TODO note pointing at a future
+  systemd user unit + LaunchAgent plist, but autostart is not on
+  the roadmap; manual launch inside `__ccmux__` is the intended
+  workflow. Removing the placeholder so collaborators don't read
+  it as a planned feature.
+
 ## 3.1.1 — 2026-04-27
 
 ### Changed
