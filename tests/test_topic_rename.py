@@ -14,20 +14,20 @@ class TestDesiredName:
     def test_alive_with_window(self) -> None:
         assert (
             desired_topic_name("daily", is_alive=True, window_id="@5")
-            == "✅ | daily (@5)"
+            == "🟢 | daily (@5)"
         )
 
     def test_dead_with_window(self) -> None:
         assert (
             desired_topic_name("daily", is_alive=False, window_id="@5")
-            == "⚠️ | daily (@5)"
+            == "🔴 | daily (@5)"
         )
 
     def test_alive_without_window_id(self) -> None:
-        assert desired_topic_name("daily", is_alive=True, window_id="") == "✅ | daily"
+        assert desired_topic_name("daily", is_alive=True, window_id="") == "🟢 | daily"
 
     def test_dead_without_window_id(self) -> None:
-        assert desired_topic_name("daily", is_alive=False, window_id="") == "⚠️ | daily"
+        assert desired_topic_name("daily", is_alive=False, window_id="") == "🔴 | daily"
 
 
 class TestRenameDispatch:
@@ -44,7 +44,7 @@ class TestRenameDispatch:
             window_id="@5",
         )
         bot.edit_forum_topic.assert_awaited_once_with(
-            chat_id=-100, message_thread_id=10, name="✅ | daily (@5)"
+            chat_id=-100, message_thread_id=10, name="🟢 | daily (@5)"
         )
 
     @pytest.mark.asyncio
@@ -85,7 +85,7 @@ class TestRenameDispatch:
         assert bot.edit_forum_topic.await_count == 2
         # Second call had the new name.
         last = bot.edit_forum_topic.await_args_list[1].kwargs
-        assert last["name"] == "✅ | daily (@17)"
+        assert last["name"] == "🟢 | daily (@17)"
 
     @pytest.mark.asyncio
     async def test_alive_to_dead_triggers_rename(self) -> None:
@@ -109,7 +109,7 @@ class TestRenameDispatch:
         )
         assert bot.edit_forum_topic.await_count == 2
         last = bot.edit_forum_topic.await_args_list[1].kwargs
-        assert last["name"] == "⚠️ | daily (@5)"
+        assert last["name"] == "🔴 | daily (@5)"
 
     @pytest.mark.asyncio
     async def test_topic_not_modified_is_silent_and_caches(self) -> None:
