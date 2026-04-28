@@ -259,11 +259,12 @@ def create_bot(backend: DefaultBackend | None = None) -> Application:
     application = (
         Application.builder()
         .token(config.telegram_bot_token)
-        # Tuned per-chat throughput. PTB's default ``max_rate=1/sec``
-        # is conservative for forum groups where many topics share
-        # one chat-id quota. Telegram itself allows ~30/sec/chat for
-        # bots; we leave headroom and pick 20.
-        .rate_limiter(AIORateLimiter(max_retries=5, max_rate=20, time_period=1))
+        # AIORateLimiter has no public per-chat tunable in PTB v21:
+        # per-chat is hardcoded to 1/sec inside the limiter and
+        # cannot be raised via constructor kwargs. The fire-and-forget
+        # of the decorative TYPING + reaction calls (v4.1.3) is the
+        # real fix; we keep retries at 5 for transient hiccups.
+        .rate_limiter(AIORateLimiter(max_retries=5))
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
