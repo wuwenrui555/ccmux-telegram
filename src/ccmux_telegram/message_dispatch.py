@@ -27,6 +27,7 @@ path in `prompt.py` / `command_basic.py`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -89,7 +90,7 @@ async def dispatch_text(
                 chat_id=chat_id, message_id=message_id, window_id=window_id, text=text
             )
         )
-        await _set_reaction(bot, chat_id, message_id, _REACTION_PENDING)
+        _set_reaction(bot, chat_id, message_id, _REACTION_PENDING)
         logger.info(
             "Dispatch pending: window=%s, state=%s, queue_len=%d",
             window_id,
@@ -133,7 +134,7 @@ async def _send_now(
 ) -> tuple[bool, str]:
     success, message = await get_default_backend().tmux.send_text(window_id, text)
     if success:
-        await _set_reaction(bot, chat_id, message_id, _REACTION_SENT)
+        _set_reaction(bot, chat_id, message_id, _REACTION_SENT)
     return success, message
 
 
@@ -144,19 +145,29 @@ def _get_state_for_window(window_id: str):  # type: ignore[no-untyped-def]
     return get_state_cache().get(topic.session_name)
 
 
-async def _set_reaction(bot: Bot, chat_id: int, message_id: int, emoji: str) -> None:
-    """Best-effort reaction. Never raises: reactions are a nice-to-have,
-    a failure here (bot lacks permission, emoji unsupported, etc.)
-    should not break the send path.
+def _set_reaction(bot: Bot, chat_id: int, message_id: int, emoji: str) -> None:
+    """Best-effort reaction (fire-and-forget).
+
+    The reaction is decorative; awaiting it would queue behind the
+    per-chat rate limiter and add ~1s of perceived latency. Schedule
+    the call as a background task and let it lose any race against
+    the main send path.
+
+    A failure (bot lacks permission, emoji unsupported, etc.) is
+    logged at DEBUG and swallowed.
     """
-    try:
-        await bot.set_message_reaction(
-            chat_id=chat_id,
-            message_id=message_id,
-            reaction=[ReactionTypeEmoji(emoji=emoji)],
-        )
-    except Exception as e:
-        logger.debug("set_message_reaction failed: %s", e)
+
+    async def _do() -> None:
+        try:
+            await bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
+            )
+        except Exception as e:
+            logger.debug("set_message_reaction failed: %s", e)
+
+    asyncio.create_task(_do())
 
 
 # Exposed for tests: let them inspect/clear the buffer without

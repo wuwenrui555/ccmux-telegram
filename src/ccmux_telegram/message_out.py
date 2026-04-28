@@ -182,7 +182,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     tm, w = pair
 
-    await update.message.chat.send_action(ChatAction.TYPING)
+    # Fire-and-forget: TYPING is decorative; awaiting it would queue
+    # behind the per-chat rate limiter and add ~1s of perceived
+    # latency to every inbound message.
+    asyncio.create_task(update.message.chat.send_action(ChatAction.TYPING))
     await enqueue_status_update(
         context.bot,
         user.id,
@@ -312,7 +315,10 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         text_to_send = f"(image attached: {file_path})"
 
-    await update.message.chat.send_action(ChatAction.TYPING)
+    # Fire-and-forget: TYPING is decorative; awaiting it would queue
+    # behind the per-chat rate limiter and add ~1s of perceived
+    # latency to every inbound message.
+    asyncio.create_task(update.message.chat.send_action(ChatAction.TYPING))
     clear_status_msg_info(user.id, thread_id)
 
     success, message = await dispatch_text(
@@ -410,7 +416,10 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(update.message, f"⚠ Transcription failed: {e}")
         return
 
-    await update.message.chat.send_action(ChatAction.TYPING)
+    # Fire-and-forget: TYPING is decorative; awaiting it would queue
+    # behind the per-chat rate limiter and add ~1s of perceived
+    # latency to every inbound message.
+    asyncio.create_task(update.message.chat.send_action(ChatAction.TYPING))
     clear_status_msg_info(user.id, thread_id)
 
     success, message = await dispatch_text(
@@ -474,7 +483,10 @@ async def forward_command_handler(
     logger.info(
         "Forwarding command %s to session %s (user=%d)", cc_slash, display, user.id
     )
-    await update.message.chat.send_action(ChatAction.TYPING)
+    # Fire-and-forget: TYPING is decorative; awaiting it would queue
+    # behind the per-chat rate limiter and add ~1s of perceived
+    # latency to every inbound message.
+    asyncio.create_task(update.message.chat.send_action(ChatAction.TYPING))
     success, message = await dispatch_text(
         bot=context.bot,
         chat_id=topic.group_chat_id,
