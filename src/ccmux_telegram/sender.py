@@ -172,7 +172,8 @@ async def safe_send(
     """Send message with formatting, falling back to plain text on failure.
 
     Returns the sent Message on success. Auto-registers the id with the
-    sweep log when called inside a `@sweep_tracked` handler.
+    sweep log when called inside a `@sweep_tracked` handler. If Telegram
+    reports the thread no longer exists, removes the matching binding.
     """
     kwargs.setdefault("link_preview_options", NO_LINK_PREVIEW)
     if message_thread_id is not None:
@@ -193,7 +194,10 @@ async def safe_send(
         except RetryAfter:
             raise
         except Exception as e:
-            logger.error(f"Failed to send message to {chat_id}: {e}")
+            from .auto_unbind import maybe_unbind
+
+            if not maybe_unbind(e, chat_id, message_thread_id):
+                logger.error(f"Failed to send message to {chat_id}: {e}")
     if sent is not None:
         track_active(sent.message_id)
     return sent

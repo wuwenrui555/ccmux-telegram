@@ -212,12 +212,34 @@ async def _message_queue_worker(bot: Bot, user_id: int, thread_id: int) -> None:
                     )
                     await asyncio.sleep(retry_secs)
             except Exception as e:
-                logger.error(
-                    "Error processing message task for user %d, thread %d: %s",
-                    user_id,
-                    thread_id,
-                    e,
-                )
+                # If Telegram says the thread no longer exists, the topic
+                # was deleted: drop the binding and any queued tasks.
+                from .auto_unbind import maybe_unbind
+
+                chat_id_for_unbind = task.chat_id if task is not None else None
+                if maybe_unbind(e, chat_id_for_unbind, thread_id):
+                    drained = 0
+                    while not queue.empty():
+                        try:
+                            queue.get_nowait()
+                            queue.task_done()
+                            drained += 1
+                        except asyncio.QueueEmpty:
+                            break
+                    logger.info(
+                        "Drained %d queued task(s) after auto-unbind "
+                        "(user %d, thread %d)",
+                        drained,
+                        user_id,
+                        thread_id,
+                    )
+                else:
+                    logger.error(
+                        "Error processing message task for user %d, thread %d: %s",
+                        user_id,
+                        thread_id,
+                        e,
+                    )
             finally:
                 queue.task_done()
         except asyncio.CancelledError:
