@@ -8,6 +8,38 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 4.1.5 — 2026-04-28
+
+### Performance
+
+Eliminates the queue-backlog latency that came from
+``StateMonitor.fast_tick`` running parallel (v4.0.1, ~2 status
+updates per second per Working binding) versus Telegram's
+hardcoded per-chat rate limit (~1/sec inside PTB's
+``AIORateLimiter``). Status updates were piling up in the
+per-topic queue ahead of content; a real Claude response could
+sit behind 10–30 stale ``Working… (Ns)`` edits, surfacing as
+~15 s of perceived round-trip latency on a "你好"-style ping.
+
+- New ``_coalesce_status_updates`` helper in ``_queue_worker``.
+  When the worker dequeues a ``status_update`` task, it scans the
+  rest of the queue for newer ``status_update`` tasks for the
+  same ``window_id`` and replaces the dequeued task with the
+  latest. Older intermediates are discarded. Other task types
+  (``content``, ``status_clear``, status updates for other
+  windows) are preserved in their original order, with
+  ``queue.task_done()`` accounting balanced via the same pattern
+  as ``_merge_content_tasks``.
+- 5 new tests in ``test_queue_coalesce.py`` covering the no-op
+  case, multi-drop, cross-window non-interference, intervening
+  content preservation, and ``status_clear`` not getting treated
+  as a ``status_update``.
+
+Net effect: a Working-state Claude can emit status updates as
+fast as the state monitor observes them; only the latest reaches
+Telegram per rate-limited slot. Content (real responses) no
+longer queues behind a backlog of stale spinner edits.
+
 ## 4.1.4 — 2026-04-28
 
 ### Fixed
