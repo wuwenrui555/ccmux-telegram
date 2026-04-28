@@ -62,11 +62,12 @@ async def _binding_health_iteration(
         t = health.observe(name, is_alive_now)
         if t is Transition.RECOVERED:
             try:
+                # Plain text on purpose: avoids MarkdownV2 escaping
+                # gymnastics for session names with `.`, `_`, `-`, etc.
                 await bot.send_message(
                     chat_id=binding.group_chat_id,
                     message_thread_id=binding.thread_id,
-                    text=f"✅ Binding to `{name}` recovered.",
-                    parse_mode="MarkdownV2",
+                    text=f"✅ Binding to {name} recovered.",
                 )
             except Exception:
                 logger.exception("Failed to post recovery notice for %s", name)
