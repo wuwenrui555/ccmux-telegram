@@ -180,6 +180,45 @@ class TopicBindings:
             session_name=session_name,
         )
 
+    def unbind_by_thread(
+        self, group_chat_id: int, thread_id: int
+    ) -> list[TopicBinding]:
+        """Remove every binding matching ``(group_chat_id, thread_id)``.
+
+        Single-user setups have at most one match; multi-user setups
+        could have one per user. Used to clean up stale bindings after
+        Telegram returns ``BadRequest: message thread not found`` (i.e.
+        the topic was deleted).
+        """
+        keys_to_remove: list[tuple[int, int]] = []
+        removed: list[TopicBinding] = []
+        for (uid, tid), (session_name, gc_id) in self._raw_state.items():
+            if tid == thread_id and gc_id == group_chat_id:
+                keys_to_remove.append((uid, tid))
+                removed.append(
+                    TopicBinding(
+                        user_id=uid,
+                        thread_id=tid,
+                        group_chat_id=gc_id,
+                        window_id="",
+                        session_name=session_name,
+                    )
+                )
+        if not keys_to_remove:
+            return []
+        for k in keys_to_remove:
+            del self._raw_state[k]
+        self._save_state_file()
+        for b in removed:
+            logger.info(
+                "Auto-unbound thread %d (chat %d) for user %d " "(session was '%s')",
+                b.thread_id,
+                b.group_chat_id,
+                b.user_id,
+                b.session_name,
+            )
+        return removed
+
     # ------------------------------------------------------------------
     # Lookups
     # ------------------------------------------------------------------

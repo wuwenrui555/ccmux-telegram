@@ -6,6 +6,36 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 4.0.1 — 2026-04-28
+
+### Added
+
+- Auto-unbind on deleted topics. When Telegram returns
+  ``BadRequest: message thread not found`` (the only signal that a
+  forum topic was deleted — there is no ``forum_topic_deleted``
+  update), the bot now drops the matching ``topic_bindings.json``
+  row instead of retrying forever. Wired into:
+  - the per-topic message queue worker (covers status updates and
+    Claude content; on auto-unbind the worker also drains any
+    queued tasks for that thread)
+  - ``sender.safe_send``
+  - ``main._binding_health_iteration`` (the ``✅ Binding ...
+    recovered`` notice)
+- ``TopicBindings.unbind_by_thread(group_chat_id, thread_id)``
+  helper used by the above.
+- ``ccmux_telegram.auto_unbind`` module: ``is_thread_deleted_error``
+  predicate + ``maybe_unbind`` helper. Match is narrow — other
+  ``BadRequest`` variants (``Chat not found``, ``Topic_not_modified``,
+  etc.) and non-``BadRequest`` errors are passthroughs.
+
+### Why
+
+Workflow was: in the Telegram client, run ``/unbind`` first, then
+delete the topic. Skipping the ``/unbind`` left a stale row in
+``topic_bindings.json`` and the bot spent forever retrying outbound
+messages to a deleted thread. Now the lazy cleanup catches it on
+the first send failure.
+
 ## 4.0.0 — 2026-04-28
 
 Frontend migrates to the v4.0.0 event-log API of `ccmux-backend`.
