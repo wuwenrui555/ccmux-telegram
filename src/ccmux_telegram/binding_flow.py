@@ -35,9 +35,9 @@ from telegram.ext import ContextTypes
 from ccmux.api import tmux_registry, sanitize_session_name
 from .claude_trust import mark_dir_trusted
 from .runtime import (
+    event_reader as _event_reader,
     iter_topics_joined,
     topics as _topics,
-    windows as _windows,
 )
 from .util import (
     has_window_binding,
@@ -336,8 +336,8 @@ async def _create_session_and_bind(
         hook_ok = False
 
         for _ in range(int(hook_timeout / poll_interval)):
-            await _windows.load()
-            if _windows.contains(session_name):
+            _event_reader.refresh()
+            if _event_reader.get(session_name) is not None:
                 hook_ok = True
                 break
             await asyncio.sleep(poll_interval)

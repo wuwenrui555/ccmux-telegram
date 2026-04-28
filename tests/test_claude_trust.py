@@ -204,13 +204,10 @@ async def test_create_session_and_bind_pre_trusts_selected_path(
     )
 
     # Short-circuit the post-creation hook wait loop and binding writes.
-    async def _instant_load():
-        return None
-
-    fake_windows = MagicMock()
-    fake_windows.load = AsyncMock(side_effect=_instant_load)
-    fake_windows.contains = MagicMock(return_value=True)
-    monkeypatch.setattr(binding_flow, "_windows", fake_windows)
+    fake_reader = MagicMock()
+    fake_reader.refresh = MagicMock(return_value=None)
+    fake_reader.get = MagicMock(return_value=MagicMock(window_id="@100"))
+    monkeypatch.setattr(binding_flow, "_event_reader", fake_reader)
 
     fake_topics = MagicMock()
     monkeypatch.setattr(binding_flow, "_topics", fake_topics)
