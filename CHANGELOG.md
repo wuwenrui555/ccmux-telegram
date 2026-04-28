@@ -1,10 +1,63 @@
 # Changelog
 
+<!-- markdownlint-disable MD024 MD046 -->
+
 All notable changes to `ccmux-telegram` are documented here. Versions
 are aligned with the backend `ccmux` library: a frontend 1.x release
 depends on backend 1.x.
 
 ## [Unreleased]
+
+## 4.1.0 — 2026-04-28
+
+### Changed (BREAKING for the topic UX)
+
+- **Status is shown by topic name, not by chat messages.** The
+  ``✅ Binding to <name> recovered`` notification posted on every
+  RECOVERED transition is removed. Instead, the bot renames each
+  bound forum topic to a structured banner reflecting current
+  status:
+
+  ```text
+  ✅ | <tmux_session_name> (<window_id>)    -- alive
+  ⚠️ | <tmux_session_name> (<window_id>)    -- not alive
+  ```
+
+  The desired name is recomputed every binding-health tick (~0.5 s)
+  from ``state_cache.is_alive(name)`` plus the current
+  ``window_id`` from the event-log reader. An in-memory cache
+  suppresses redundant ``edit_forum_topic`` calls; only a name that
+  differs from the cache hits the API. ``BadRequest:
+  Topic_not_modified`` is silenced and treated as a successful
+  render.
+
+  Telegram's ``BadRequest: message thread not found`` continues to
+  trigger the v4.0.1 auto-unbind path.
+
+### Removed
+
+- ``ccmux_telegram.binding_health`` module
+  (``BindingHealth`` / ``Transition``). With the rename approach,
+  per-binding alive transitions are no longer tracked separately —
+  the desired-name diff against the in-memory cache is the trigger.
+- ``main._binding_health_iteration`` /
+  ``_run_binding_health_loop``. Replaced by
+  ``_topic_status_iteration`` / ``_run_topic_status_loop``.
+- ``test_binding_health.py``, ``test_binding_health_loop.py``.
+
+### Added
+
+- ``ccmux_telegram.topic_rename`` module: ``desired_topic_name``
+  pure function and ``TopicRenamer`` class. 14 new tests
+  (``test_topic_rename.py``).
+
+### Migration
+
+Nothing for the user. On bot start the next iteration's rename pass
+formats every bound topic to the new banner. Topics where the user
+manually set a custom name will be overwritten — that is
+intentional, since the format is now the authoritative source of
+status.
 
 ## 4.0.1 — 2026-04-28
 

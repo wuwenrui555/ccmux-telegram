@@ -12,49 +12,46 @@ import asyncio
 import logging
 import sys
 
-from .binding_health import BindingHealth, Transition
+from .topic_rename import TopicRenamer
 
 logger = logging.getLogger(__name__)
 
 
-async def _binding_health_iteration(
-    topics, state_cache, health: BindingHealth, bot
+async def _topic_status_iteration(
+    topics, state_cache, event_reader, renamer: TopicRenamer, bot
 ) -> None:
-    """One pass of the binding-health detector.
+    """One pass of the topic-status renamer.
 
-    Iterates every binding, observes its current ``is_alive`` value,
-    and posts ``✅ Binding to X recovered`` when the per-binding
-    transition is ``RECOVERED``. ``LOST`` is intentionally not posted
-    here; ``message_out.py`` already warns on the next user send.
+    For each bound topic, compute the desired name from the binding's
+    current ``is_alive`` flag and ``window_id``, and tell the renamer
+    to push it. The renamer caches the last-rendered name per topic
+    so steady-state ticks are no-ops.
     """
     for binding in topics.all():
         name = binding.session_name
         is_alive_now = state_cache.is_alive(name)
-        t = health.observe(name, is_alive_now)
-        if t is Transition.RECOVERED:
-            try:
-                # Plain text on purpose: avoids MarkdownV2 escaping
-                # gymnastics for session names with `.`, `_`, `-`, etc.
-                await bot.send_message(
-                    chat_id=binding.group_chat_id,
-                    message_thread_id=binding.thread_id,
-                    text=f"✅ Binding to {name} recovered.",
-                )
-            except Exception as e:
-                from .auto_unbind import maybe_unbind
-
-                if not maybe_unbind(e, binding.group_chat_id, binding.thread_id):
-                    logger.exception("Failed to post recovery notice for %s", name)
+        b = event_reader.get(name)
+        window_id = b.window_id if b is not None else ""
+        await renamer.maybe_rename(
+            bot,
+            group_chat_id=binding.group_chat_id,
+            thread_id=binding.thread_id,
+            session_name=name,
+            is_alive=is_alive_now,
+            window_id=window_id,
+        )
 
 
-async def _run_binding_health_loop(
-    topics, state_cache, health: BindingHealth, bot, interval: float = 0.5
+async def _run_topic_status_loop(
+    topics, state_cache, event_reader, renamer: TopicRenamer, bot, interval: float = 0.5
 ) -> None:
     while True:
         try:
-            await _binding_health_iteration(topics, state_cache, health, bot)
+            await _topic_status_iteration(
+                topics, state_cache, event_reader, renamer, bot
+            )
         except Exception:
-            logger.exception("binding_health iteration failed")
+            logger.exception("topic_status iteration failed")
         await asyncio.sleep(interval)
 
 
@@ -128,11 +125,11 @@ def main() -> None:
 
     application = create_bot(backend=backend)
 
-    # Schedule the per-binding health loop on the same event loop the
+    # Schedule the per-topic status renamer on the same event loop the
     # bot runs on. Chain onto the existing post_init/post_shutdown that
     # create_bot installed — overwriting them would break menu setup,
     # rate-limiter prefill, etc.
-    binding_health = BindingHealth()
+    renamer = TopicRenamer()
     from .state_cache import get_state_cache
 
     state_cache = get_state_cache()
@@ -143,12 +140,12 @@ def main() -> None:
     async def _post_init(app) -> None:
         if _existing_post_init is not None:
             await _existing_post_init(app)
-        app.bot_data["_binding_health_task"] = asyncio.create_task(
-            _run_binding_health_loop(topics, state_cache, binding_health, app.bot)
+        app.bot_data["_topic_status_task"] = asyncio.create_task(
+            _run_topic_status_loop(topics, state_cache, event_reader, renamer, app.bot)
         )
 
     async def _post_shutdown(app) -> None:
-        task = app.bot_data.get("_binding_health_task")
+        task = app.bot_data.get("_topic_status_task")
         if task is not None:
             task.cancel()
         if _existing_post_shutdown is not None:
