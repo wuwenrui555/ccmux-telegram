@@ -58,6 +58,56 @@ def _can_merge_tasks(base: _mq.MessageTask, candidate: _mq.MessageTask) -> bool:
     return True
 
 
+async def _coalesce_status_updates(
+    queue: asyncio.Queue[_mq.MessageTask],
+    first: _mq.MessageTask,
+    lock: asyncio.Lock,
+) -> tuple[_mq.MessageTask, int]:
+    """Drop stale status_update tasks for the same window.
+
+    Telegram's per-chat rate limit (~1/sec, hardcoded inside PTB's
+    ``AIORateLimiter``) means status updates can pile up faster than
+    the worker can deliver them. Each ``Working`` status text edit
+    that lands behind the actual response delays the response by
+    one rate-limited slot. With ``StateMonitor.fast_tick`` running
+    parallel (v4.0.1), status updates produce at ~2/sec for a
+    thinking Claude — a backlog the user feels as latency.
+
+    On dequeue of a ``status_update`` for window X, scan ahead for
+    other ``status_update`` tasks for the same window. Replace
+    ``first`` with the LATEST one and drop the intermediates. Other
+    task types (content, status_clear, status_update for other
+    windows) are preserved in their original order.
+
+    Returns ``(latest_task, dropped_count)`` where ``dropped_count``
+    is how many older status_update tasks for ``first.window_id``
+    were discarded.
+    """
+    latest = first
+    dropped = 0
+
+    async with lock:
+        items = _inspect_queue(queue)
+        keep: list[_mq.MessageTask] = []
+        for task in items:
+            if task.task_type == "status_update" and task.window_id == first.window_id:
+                # Newer status for the same window: replace and drop
+                # the previous "latest" (it was already accounted for
+                # by being either ``first`` or a prior coalesced item).
+                latest = task
+                dropped += 1
+                continue
+            keep.append(task)
+
+        for item in keep:
+            queue.put_nowait(item)
+            # put_nowait re-counts; balance with task_done since the
+            # item was counted on its original enqueue.
+            queue.task_done()
+
+    return latest, dropped
+
+
 async def _merge_content_tasks(
     queue: asyncio.Queue[_mq.MessageTask],
     first: _mq.MessageTask,
@@ -181,7 +231,23 @@ async def _message_queue_worker(bot: Bot, user_id: int, thread_id: int) -> None:
                             queue.task_done()
                     await _process_content_task(bot, user_id, merged_task)
                 elif task.task_type == "status_update":
-                    await _process_status_update_task(bot, user_id, task)
+                    # Coalesce: drop older status_update tasks for the
+                    # same window if a newer one is queued behind us.
+                    latest_task, dropped = await _coalesce_status_updates(
+                        queue, task, lock
+                    )
+                    if dropped > 0:
+                        logger.debug(
+                            "Dropped %d stale status_update(s) for window %s "
+                            "(user %d, thread %d)",
+                            dropped,
+                            task.window_id,
+                            user_id,
+                            thread_id,
+                        )
+                        for _ in range(dropped):
+                            queue.task_done()
+                    await _process_status_update_task(bot, user_id, latest_task)
                 elif task.task_type == "status_clear":
                     await _do_clear_status_message(
                         bot, user_id, task.thread_id or 0, chat_id=task.chat_id
