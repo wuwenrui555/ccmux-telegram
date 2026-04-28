@@ -43,8 +43,31 @@ async def _topic_status_iteration(
 
 
 async def _run_topic_status_loop(
-    topics, state_cache, event_reader, renamer: TopicRenamer, bot, interval: float = 0.5
+    topics,
+    state_cache,
+    event_reader,
+    renamer: TopicRenamer,
+    bot,
+    interval: float = 0.5,
+    startup_delay: float = 5.0,
 ) -> None:
+    """Run the topic-status renamer until cancelled.
+
+    The first iteration fires up to N concurrent ``edit_forum_topic``
+    calls (one per bound topic, all needing rename on cold start).
+    python-telegram-bot's bootstrap (``delete_webhook``) and
+    rate-limiter initialisation are still completing in parallel
+    when ``post_init`` returns; firing 12 API calls into a
+    half-initialised HTTPXRequest reproducibly triggers
+    ``RuntimeError('This HTTPXRequest is not initialized!')`` and
+    the bot exits.
+
+    Sleeping for ``startup_delay`` seconds before the first
+    iteration lets the application reach steady state. After that,
+    the cache means most ticks are no-ops, so steady-state load is
+    negligible.
+    """
+    await asyncio.sleep(startup_delay)
     while True:
         try:
             await _topic_status_iteration(

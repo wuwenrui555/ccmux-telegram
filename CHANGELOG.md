@@ -8,6 +8,21 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 4.1.2 — 2026-04-28
+
+### Fixed
+
+- ``_run_topic_status_loop`` now sleeps ``startup_delay`` seconds
+  (default 5) before its first iteration. Without this delay, the
+  loop's first tick fires up to N concurrent
+  ``edit_forum_topic`` calls (one per bound topic, all stale on
+  cold start) into a half-initialised
+  python-telegram-bot HTTPXRequest, which reproducibly triggers
+  ``RuntimeError('This HTTPXRequest is not initialized!')`` and
+  bails the bootstrap. After the delay the application has
+  reached steady state; the cache then keeps subsequent ticks
+  cheap.
+
 ## 4.1.1 — 2026-04-28
 
 ### Changed
