@@ -211,7 +211,7 @@ class TopicBindings:
         self._save_state_file()
         for b in removed:
             logger.info(
-                "Auto-unbound thread %d (chat %d) for user %d " "(session was '%s')",
+                "Auto-unbound thread %d (chat %d) for user %d (session was '%s')",
                 b.thread_id,
                 b.group_chat_id,
                 b.user_id,
