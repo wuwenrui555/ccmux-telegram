@@ -13,7 +13,7 @@ from typing import Any
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from .runtime import get_topic, windows as _windows
+from .runtime import event_reader as _event_reader, get_topic
 from .topic_bindings import TopicBinding
 from .util import authorized, get_thread_id
 from .callback_data import CB_HISTORY_NEXT, CB_HISTORY_PREV
@@ -70,12 +70,12 @@ async def send_history(
 
     from ccmux.api import get_default_backend
 
-    instance = _windows.get(topic.session_name)
-    if instance is None or not instance.session_id:
+    binding = _event_reader.get(topic.session_name)
+    if binding is None or not binding.claude_session_id:
         messages: list[dict] = []
     else:
         messages = await get_default_backend().claude.get_history(
-            instance.session_id,
+            binding.claude_session_id,
             start_byte=start_byte,
             end_byte=end_byte if end_byte > 0 else None,
         )

@@ -27,7 +27,7 @@ from telegram.ext import (
 )
 
 from .config import config
-from .runtime import resolve_stale_ids, windows as _windows
+from .runtime import event_reader as _event_reader
 from ccmux.api import DefaultBackend, set_default_backend
 from .message_in import handle_new_message
 from .bash_capture import shutdown_bash_captures
@@ -189,19 +189,12 @@ async def post_init(application: Application) -> None:
         BotCommand("history", "Message history for this topic"),
         BotCommand("unbind", "Unbind topic from session (keeps window running)"),
         BotCommand("rebind_topic", "Pick a different tmux session for this topic"),
-        BotCommand(
-            "rebind_window",
-            "Refresh which window of the bound session this topic uses",
-        ),
         BotCommand("usage", "Show Claude Code usage remaining"),
     ]
     for cmd_name, desc in CC_COMMANDS.items():
         bot_commands.append(BotCommand(cmd_name, desc))
 
     await application.bot.set_my_commands(bot_commands)
-
-    # Re-resolve stale window IDs from persisted state against live tmux windows
-    await resolve_stale_ids()
 
     # Pre-fill global rate limiter bucket on restart.
     rate_limiter = application.bot.rate_limiter
@@ -221,7 +214,7 @@ async def post_init(application: Application) -> None:
 
         backend = DefaultBackend(
             tmux_registry=tmux_registry,
-            registry=_windows,
+            event_reader=_event_reader,
         )
         set_default_backend(backend)
     _backend = backend
@@ -280,9 +273,6 @@ def create_bot(backend: DefaultBackend | None = None) -> Application:
     application.add_handler(CommandHandler("unbind", commands.unbind_command))
     application.add_handler(
         CommandHandler("rebind_topic", commands.rebind_topic_command)
-    )
-    application.add_handler(
-        CommandHandler("rebind_window", commands.rebind_window_command)
     )
     application.add_handler(CommandHandler("usage", commands.usage_command))
     application.add_handler(CommandHandler("sweep", commands.sweep_command))

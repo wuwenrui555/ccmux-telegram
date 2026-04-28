@@ -130,7 +130,7 @@ async def text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
+            "tmux or Claude may be down. Use /rebind_topic to switch.",
         )
         return
     if not topic.window_id:
@@ -186,7 +186,7 @@ async def bar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
+            "tmux or Claude may be down. Use /rebind_topic to switch.",
         )
         return
     if not topic.window_id:
@@ -282,49 +282,6 @@ def _get_backend():
 
 
 @authorized()
-async def rebind_window_command(
-    update: Update, _context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Handle /rebind_window — refresh the bound session's window mapping.
-
-    Calls backend.reconcile_instance for the topic's session_name and,
-    if a live Claude window is found, installs an in-memory override.
-    Reports outcome inline. Use this when the bot reports "Binding to
-    X is not alive" but the underlying tmux session still has Claude
-    running (just in a different window than ``claude_instances.json``
-    records).
-    """
-    user = update.effective_user
-    if user is None or update.message is None:
-        return
-    thread_id = get_thread_id(update)
-    topic = get_topic(user.id, thread_id) if thread_id is not None else None
-
-    if topic is None:
-        await safe_reply(
-            update.message,
-            "❌ No session bound here. Use /rebind_topic first.",
-        )
-        return
-
-    backend = _get_backend()
-    inst = await backend.reconcile_instance(topic.session_name)
-    if inst is None:
-        await safe_reply(
-            update.message,
-            f"⚠️ Session `{topic.session_name}` has no live Claude. "
-            "Use /rebind_topic to switch, or /start to spawn a new Claude.",
-        )
-        return
-
-    backend.claude_instances.set_override(topic.session_name, inst)
-    await safe_reply(
-        update.message,
-        f"✅ Refreshed binding: `{topic.session_name}` → `{inst.window_id}`.",
-    )
-
-
-@authorized()
 async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send Escape key to interrupt Claude."""
     user = update.effective_user
@@ -341,7 +298,7 @@ async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
+            "tmux or Claude may be down. Use /rebind_topic to switch.",
         )
         return
     if not topic.window_id:
@@ -381,7 +338,7 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
+            "tmux or Claude may be down. Use /rebind_topic to switch.",
         )
         return
     if not topic.window_id:

@@ -17,35 +17,6 @@ from .binding_health import BindingHealth, Transition
 logger = logging.getLogger(__name__)
 
 
-async def _run_startup_reconcile(topics, backend) -> None:
-    """Best-effort pass to fix stale bindings before the bot serves.
-
-    Silent: no Telegram messages are emitted; the user wasn't online
-    to react to anything. For each unique session_name across topic
-    bindings, ask the backend to reconcile and install any returned
-    instance as an in-memory override.
-    """
-    seen: set[str] = set()
-    for binding in topics.all():
-        name = binding.session_name
-        if name in seen:
-            continue
-        seen.add(name)
-        try:
-            inst = await backend.reconcile_instance(name)
-        except Exception:
-            logger.exception("startup reconcile failed for %s", name)
-            continue
-        if inst is not None:
-            backend.claude_instances.set_override(name, inst)
-            logger.info(
-                "startup reconcile: %s -> %s (%s)",
-                name,
-                inst.window_id,
-                inst.session_id,
-            )
-
-
 async def _binding_health_iteration(
     topics, state_cache, health: BindingHealth, bot
 ) -> None:
@@ -125,7 +96,7 @@ def main() -> None:
     from ccmux.api import DefaultBackend, tmux_registry, set_default_backend
     from ccmux.config import config as backend_config
 
-    from .runtime import topics, windows
+    from .runtime import event_reader, topics
 
     logger.info("Allowed users: %s", config.allowed_users)
     logger.info("Claude projects path: %s", backend_config.claude_projects_path)
@@ -142,14 +113,12 @@ def main() -> None:
         else:
             logger.info("Restored TmuxSession for session '%s'", session_name)
     logger.info(
-        "Registry recovered: %d sessions", len(tmux_registry.registered_session_names())
+        "Registry recovered: %d sessions",
+        len(tmux_registry.registered_session_names()),
     )
 
-    backend = DefaultBackend(tmux_registry=tmux_registry, registry=windows)
+    backend = DefaultBackend(tmux_registry=tmux_registry, event_reader=event_reader)
     set_default_backend(backend)
-
-    # Startup reconcile pass: silent best-effort fix for stale bindings.
-    asyncio.run(_run_startup_reconcile(topics, backend))
 
     logger.info("Starting Telegram bot...")
     from .bot import create_bot

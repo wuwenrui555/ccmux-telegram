@@ -114,9 +114,10 @@ async def get_tm_and_window(window_id: str):
 
 
 def has_window_binding(session_name: str) -> bool:
-    """True iff the backend registry currently holds a complete instance
-    for ``session_name`` (both window_id and session_id populated).
+    """True iff the event log holds a current binding for ``session_name``
+    with both ``window_id`` and ``claude_session_id`` populated.
     """
-    from .runtime import windows
+    from .runtime import event_reader
 
-    return windows.contains(session_name)
+    binding = event_reader.get(session_name)
+    return binding is not None and bool(binding.window_id and binding.claude_session_id)
