@@ -8,6 +8,15 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 4.1.1 — 2026-04-28
+
+### Changed
+
+- Topic-status banners switch from ``✅`` / ``⚠️`` to ``🟢`` /
+  ``🔴``. The check / warning glyphs render too small to be
+  legible in Telegram clients' topic-list rows; the colored
+  circles are substantially more visible. No code-shape change.
+
 ## 4.1.0 — 2026-04-28
 
 ### Changed (BREAKING for the topic UX)

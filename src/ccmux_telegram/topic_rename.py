@@ -5,8 +5,12 @@ notifications, which polluted every topic on every Claude
 crash/resume cycle. Instead, the bot renames the forum topic itself
 to a single-line status banner:
 
-    ✅ | <tmux_session_name> (<window_id>)    -- Claude alive
-    ⚠️ | <tmux_session_name> (<window_id>)    -- Claude not alive
+    🟢 | <tmux_session_name> (<window_id>)    -- Claude alive
+    🔴 | <tmux_session_name> (<window_id>)    -- Claude not alive
+
+(v4.1.0 used ✅/⚠️ but those render too small to be visible in
+Telegram clients' topic-list rows; the colored circles are
+substantially more legible.)
 
 The desired name is recomputed every binding-health tick. An
 in-memory ``(group_chat_id, thread_id) → last_rendered`` cache
@@ -37,7 +41,7 @@ def desired_topic_name(session_name: str, is_alive: bool, window_id: str) -> str
 
     ``window_id`` is included only when non-empty.
     """
-    status = "✅" if is_alive else "⚠️"
+    status = "🟢" if is_alive else "🔴"
     if window_id:
         return f"{status} | {session_name} ({window_id})"
     return f"{status} | {session_name}"
