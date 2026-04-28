@@ -1,4 +1,4 @@
-"""Basic bot command handlers — /start, /text, /esc, /usage, /unbind, /rebind.
+"""Basic bot command handlers — /start, /text, /esc, /usage, /unbind, /rebind_topic, /rebind_window.
 
 Provides Telegram command handlers for bot-specific actions (not forwarded
 to Claude Code):
@@ -7,7 +7,8 @@ to Claude Code):
   - esc_command: Send Escape key to interrupt Claude
   - usage_command: Fetch and display Claude Code usage stats
   - unbind_command: Unbind topic from session without killing window
-  - rebind_command: Unbind and re-trigger session picker flow
+  - rebind_topic_command: Unbind and re-trigger session picker flow
+  - rebind_window_command: Refresh the bound session's active window via reconcile
 
 The /history command lives in `command_history.py`.
 """
@@ -98,7 +99,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(
             update.message,
             f"✅ Bound to `{topic.session_name}`.\n\n"
-            "/rebind — switch to another session\n"
+            "/rebind_topic — switch to another session\n"
             "/history — view past messages\n"
             "/unbind — remove this binding",
         )
@@ -129,7 +130,7 @@ async def text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
     if not topic.window_id:
@@ -185,7 +186,7 @@ async def bar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
     if not topic.window_id:
@@ -246,8 +247,10 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 @authorized()
-async def rebind_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /rebind — show picker to choose a different session.
+async def rebind_topic_command(
+    update: Update, _context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /rebind_topic — show picker to choose a different session.
 
     Keeps the current binding until the user confirms a new selection.
     Cancelling the picker leaves the existing binding untouched.
@@ -257,12 +260,68 @@ async def rebind_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) ->
     thread_id = get_thread_id(update)
     if thread_id is None or update.message is None:
         if update.message:
-            await safe_reply(update.message, "❌ Use /rebind inside a named topic.")
+            await safe_reply(
+                update.message, "❌ Use /rebind_topic inside a named topic."
+            )
         return
 
     from .binding_flow import handle_unbound_topic
 
     await handle_unbound_topic(update, _context, user, thread_id, text="")
+
+
+def _get_backend():
+    """Resolve the backend singleton.
+
+    Wrapped so tests can patch `_get_backend` rather than the underlying
+    `get_default_backend` from ccmux.api.
+    """
+    from ccmux.api import get_default_backend
+
+    return get_default_backend()
+
+
+@authorized()
+async def rebind_window_command(
+    update: Update, _context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /rebind_window — refresh the bound session's window mapping.
+
+    Calls backend.reconcile_instance for the topic's session_name and,
+    if a live Claude window is found, installs an in-memory override.
+    Reports outcome inline. Use this when the bot reports "Binding to
+    X is not alive" but the underlying tmux session still has Claude
+    running (just in a different window than ``claude_instances.json``
+    records).
+    """
+    user = update.effective_user
+    if user is None or update.message is None:
+        return
+    thread_id = get_thread_id(update)
+    topic = get_topic(user.id, thread_id) if thread_id is not None else None
+
+    if topic is None:
+        await safe_reply(
+            update.message,
+            "❌ No session bound here. Use /rebind_topic first.",
+        )
+        return
+
+    backend = _get_backend()
+    inst = await backend.reconcile_instance(topic.session_name)
+    if inst is None:
+        await safe_reply(
+            update.message,
+            f"⚠️ Session `{topic.session_name}` has no live Claude. "
+            "Use /rebind_topic to switch, or /start to spawn a new Claude.",
+        )
+        return
+
+    backend.claude_instances.set_override(topic.session_name, inst)
+    await safe_reply(
+        update.message,
+        f"✅ Refreshed binding: `{topic.session_name}` → `{inst.window_id}`.",
+    )
 
 
 @authorized()
@@ -282,7 +341,7 @@ async def esc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
     if not topic.window_id:
@@ -322,7 +381,7 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
     if not topic.window_id:
