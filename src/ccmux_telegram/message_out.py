@@ -81,7 +81,7 @@ async def _resolve_target(
         await safe_reply(
             message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return None
 
@@ -105,7 +105,7 @@ async def _resolve_target(
         await safe_reply(
             message,
             f"❌ Session '{topic.session_name}' window no longer exists. "
-            "Use /rebind to connect to a different session.",
+            "Use /rebind_topic to connect to a different session.",
         )
         return None
 
@@ -151,7 +151,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
 
@@ -177,7 +177,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_reply(
             update.message,
             f"❌ Session '{topic.session_name}' window no longer exists. "
-            "Use /rebind to connect to a different session.",
+            "Use /rebind_topic to connect to a different session.",
         )
         return
     tm, w = pair
@@ -269,7 +269,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
 
@@ -292,7 +292,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(
             update.message,
             f"❌ Session '{topic.session_name}' window no longer exists. "
-            "Use /rebind to connect to a different session.",
+            "Use /rebind_topic to connect to a different session.",
         )
         return
 
@@ -368,7 +368,7 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
 
@@ -391,7 +391,7 @@ async def voice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await safe_reply(
             update.message,
             f"❌ Session '{topic.session_name}' window no longer exists. "
-            "Use /rebind to connect to a different session.",
+            "Use /rebind_topic to connect to a different session.",
         )
         return
 
@@ -451,7 +451,7 @@ async def forward_command_handler(
         await safe_reply(
             update.message,
             f"⚠️ Binding to `{topic.session_name}` is not alive right now. "
-            "tmux or Claude may be down. Use /rebind to reconnect to a different session.",
+            "tmux or Claude may be down. Use /rebind_window to refresh, or /rebind_topic to switch.",
         )
         return
 

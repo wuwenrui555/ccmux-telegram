@@ -6,6 +6,48 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 3.2.0 — 2026-04-27
+
+### Added
+
+- `/rebind_window` command. Refreshes the binding's window mapping by
+  asking the backend's `reconcile_instance` for the live Claude
+  window in the bound tmux session. Replies `✅ Refreshed binding:
+  <session> → <window_id>` on success, `⚠️ Session has no live
+  Claude` when the session is empty, or `❌ No session bound here`
+  in an unbound topic.
+- Startup reconcile pass. On bot start, every unique `session_name`
+  in `topic_bindings.json` is reconciled once and any returned
+  instance is installed as an in-memory override on
+  `ClaudeInstanceRegistry`. Silent — no Telegram messages are sent
+  while the bot is offline.
+- Periodic binding-health detector. Background asyncio task at 0.5 s
+  cadence observes `state_cache.is_alive` per binding and, on a
+  false → true transition for any cause (manual edit of
+  `claude_instances.json`, `/rebind_window`, future hook fires),
+  posts `✅ Binding to <session> recovered.` to the bound topic.
+  Per-binding `LOST` is intentionally not posted — the existing
+  ⚠️ on next user send already covers that.
+- New module `ccmux_telegram.binding_health` with `BindingHealth` and
+  `Transition` (`STABLE` / `RECOVERED` / `LOST`).
+
+### Changed
+
+- The "binding not alive" warning now points at `/rebind_window` to
+  refresh the window mapping and `/rebind_topic` to switch sessions
+  (was: "Use /rebind to reconnect").
+- `pyproject.toml` requires `ccmux>=3.1.1,<4.0.0` for the new
+  `Backend.reconcile_instance` API, the `ClaudeInstanceRegistry`
+  override layer, the `claude_instances` accessor, and the
+  cross-platform mtime-based `pid_session_resolver` fix.
+
+### Removed
+
+- `/rebind` is gone. Use `/rebind_topic` to swap which tmux session a
+  topic talks to. Use `/rebind_window` to refresh the current
+  session's window mapping when the bot reports "not alive". Drop
+  /rebind muscle memory.
+
 ## 3.1.2 — 2026-04-27
 
 ### Removed

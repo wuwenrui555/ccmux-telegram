@@ -30,7 +30,8 @@ Each topic binds to one tmux window. Messages you send in the topic go to Claude
 - `/sweep` — delete this topic's bot commands and replies (tracks output-heavy commands: `/text`, `/bar`, `/history`, `/usage`, plus `/sweep` itself)
 - `/history` — message history for this topic
 - `/unbind` — unbind topic from session (keeps the tmux window running)
-- `/rebind` — unbind and pick a different session
+- `/rebind_topic` — pick a different tmux session for this topic (replaces the old `/rebind`; same picker UI)
+- `/rebind_window` — refresh which tmux window of the bound session this topic talks to. Use this when the bot reports "Binding to X is not alive" but Claude is actually still alive in the session (just in a different window than `claude_instances.json` records, e.g. after `tmux-continuum` restored panes). Calls the backend's `reconcile_instance` and installs the result as an in-memory override; replies with the new `window_id` on success or `⚠️ Session has no live Claude` if the session is empty.
 - `/usage` — show Claude Code usage remaining
 
 ### Forwarded to Claude Code
