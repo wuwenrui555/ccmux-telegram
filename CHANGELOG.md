@@ -8,6 +8,41 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 4.1.3 — 2026-04-28
+
+### Performance
+
+Cuts perceived inbound latency from ~5 s/message to sub-second by
+removing rate-limited blocking calls from the inbound handler's
+critical path.
+
+- ``message_out.text_handler``: ``send_action(TYPING)`` is now
+  ``asyncio.create_task``'d instead of awaited. The TYPING
+  indicator is decorative; awaiting it queued behind the per-chat
+  rate limiter and added a token-wait per message.
+- ``message_dispatch._set_reaction``: same treatment. The
+  ⏳ / 👤 reactions are decorative confirmation; awaiting them
+  added a second token-wait. ``_set_reaction`` is now a sync
+  function that schedules the API call as a background task.
+  Test fixtures updated to ``await asyncio.sleep(0)`` before
+  asserting on ``set_message_reaction`` to let the scheduled task
+  run.
+- ``AIORateLimiter`` retuned: ``max_rate=20, time_period=1``
+  (was the default ``max_rate=1, time_period=1``). PTB's default
+  is conservative for forum groups where many topics share one
+  chat-id quota; Telegram itself allows ~30/sec/chat for bots,
+  20 leaves headroom.
+
+### Cleanup
+
+- One-time GC of ``~/.ccmux/claude_events.jsonl``: dropped a
+  long-stale ``__ccmux__ → @219`` row from the original v4
+  bootstrap. ``__ccmux__`` is the bot's own tmux session and
+  shouldn't be tracked as a Claude binding; with that row gone,
+  ``StateMonitor.fast_tick`` stops triggering a synchronous
+  ``_rebuild_window_map`` (~50 ms event-loop block) on every
+  tick.
+
 ## 4.1.2 — 2026-04-28
 
 ### Fixed

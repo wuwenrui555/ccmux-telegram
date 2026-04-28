@@ -1,5 +1,6 @@
 """Tests for message_dispatch — state-gated send to Claude Code."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,7 +55,8 @@ async def test_idle_sends_immediately_and_reacts_sent():
         assert ok
         fake_backend.tmux.send_text.assert_awaited_once_with("@1", "hi")
         assert md._pending_snapshot("@1") == []
-        # sent reaction applied
+        # Reaction is fire-and-forget: yield to let the scheduled task run.
+        await asyncio.sleep(0)
         bot.set_message_reaction.assert_awaited_once()
         args = bot.set_message_reaction.call_args
         assert args.kwargs["reaction"][0].emoji == md._REACTION_SENT
@@ -83,7 +85,8 @@ async def test_working_pends_and_reacts_pending():
         snapshot = md._pending_snapshot("@1")
         assert len(snapshot) == 1
         assert snapshot[0].text == "one"
-        # pending reaction applied
+        # Reaction is fire-and-forget: yield to let the scheduled task run.
+        await asyncio.sleep(0)
         bot.set_message_reaction.assert_awaited_once()
         args = bot.set_message_reaction.call_args
         assert args.kwargs["reaction"][0].emoji == md._REACTION_PENDING
