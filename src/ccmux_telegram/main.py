@@ -156,13 +156,20 @@ def main() -> None:
     application = create_bot(backend=backend)
 
     # Schedule the per-binding health loop on the same event loop the
-    # bot runs on. python-telegram-bot exposes post_init for this.
+    # bot runs on. Chain onto the existing post_init/post_shutdown that
+    # create_bot installed — overwriting them would break menu setup,
+    # rate-limiter prefill, etc.
     binding_health = BindingHealth()
     from .state_cache import get_state_cache
 
     state_cache = get_state_cache()
 
+    _existing_post_init = application.post_init
+    _existing_post_shutdown = application.post_shutdown
+
     async def _post_init(app) -> None:
+        if _existing_post_init is not None:
+            await _existing_post_init(app)
         app.bot_data["_binding_health_task"] = asyncio.create_task(
             _run_binding_health_loop(topics, state_cache, binding_health, app.bot)
         )
@@ -171,6 +178,8 @@ def main() -> None:
         task = app.bot_data.get("_binding_health_task")
         if task is not None:
             task.cancel()
+        if _existing_post_shutdown is not None:
+            await _existing_post_shutdown(app)
 
     application.post_init = _post_init
     application.post_shutdown = _post_shutdown
