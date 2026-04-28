@@ -40,8 +40,11 @@ async def _binding_health_iteration(
                     message_thread_id=binding.thread_id,
                     text=f"✅ Binding to {name} recovered.",
                 )
-            except Exception:
-                logger.exception("Failed to post recovery notice for %s", name)
+            except Exception as e:
+                from .auto_unbind import maybe_unbind
+
+                if not maybe_unbind(e, binding.group_chat_id, binding.thread_id):
+                    logger.exception("Failed to post recovery notice for %s", name)
 
 
 async def _run_binding_health_loop(
