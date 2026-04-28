@@ -8,6 +8,21 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 4.1.4 — 2026-04-28
+
+### Fixed
+
+- ``AIORateLimiter`` constructor call reverted to
+  ``AIORateLimiter(max_retries=5)``. v4.1.3 attempted
+  ``max_rate=20, time_period=1`` based on a misread of the
+  ``BaseRateLimiter`` API. Those kwargs do not exist on
+  python-telegram-bot's ``AIORateLimiter`` (per-chat is hardcoded
+  to 1/sec internally and not configurable via constructor) and
+  the bot crashed at startup with
+  ``TypeError: AIORateLimiter.__init__() got an unexpected keyword
+  argument 'max_rate'``. The fire-and-forget changes from v4.1.3
+  remain — they were the real perf win regardless.
+
 ## 4.1.3 — 2026-04-28
 
 ### Performance
