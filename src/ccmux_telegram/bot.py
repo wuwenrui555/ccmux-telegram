@@ -188,7 +188,11 @@ async def post_init(application: Application) -> None:
         BotCommand("sweep", "Delete this topic's bot commands and replies"),
         BotCommand("history", "Message history for this topic"),
         BotCommand("unbind", "Unbind topic from session (keeps window running)"),
-        BotCommand("rebind", "Unbind and pick a different session"),
+        BotCommand("rebind_topic", "Pick a different tmux session for this topic"),
+        BotCommand(
+            "rebind_window",
+            "Refresh which window of the bound session this topic uses",
+        ),
         BotCommand("usage", "Show Claude Code usage remaining"),
     ]
     for cmd_name, desc in CC_COMMANDS.items():
@@ -274,7 +278,12 @@ def create_bot(backend: DefaultBackend | None = None) -> Application:
     application.add_handler(CommandHandler("bar", commands.bar_command))
     application.add_handler(CommandHandler("esc", commands.esc_command))
     application.add_handler(CommandHandler("unbind", commands.unbind_command))
-    application.add_handler(CommandHandler("rebind", commands.rebind_command))
+    application.add_handler(
+        CommandHandler("rebind_topic", commands.rebind_topic_command)
+    )
+    application.add_handler(
+        CommandHandler("rebind_window", commands.rebind_window_command)
+    )
     application.add_handler(CommandHandler("usage", commands.usage_command))
     application.add_handler(CommandHandler("sweep", commands.sweep_command))
     application.add_handler(CallbackQueryHandler(callback_handler))

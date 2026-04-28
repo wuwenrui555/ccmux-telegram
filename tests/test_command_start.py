@@ -81,7 +81,7 @@ async def test_start_in_bound_topic_shows_session_info(_authorized):
     reply.assert_awaited_once()
     body = reply.call_args.args[1]
     assert "`daily`" in body
-    assert "/rebind" in body
+    assert "/rebind_topic" in body
     assert "/history" in body
     assert "/unbind" in body
     # The generic "Create a new topic" text is for unbound / no-thread
