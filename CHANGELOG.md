@@ -6,6 +6,51 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 4.0.0 — 2026-04-28
+
+Frontend migrates to the v4.0.0 event-log API of `ccmux-backend`.
+The v3.1 override layer plumbing is gone; the backend's
+`EventLogReader` is the single source of truth for "which Claude
+window is in which tmux session". Self-heals on every user prompt.
+
+### Changed (BREAKING)
+
+- Requires `ccmux>=4.0.0,<5.0.0`. Earlier backends are not
+  supported (the symbols this frontend used to consume —
+  `ClaudeInstanceRegistry`, `reconcile_instance`, `set_override` —
+  are deleted in `ccmux` v4.0.0).
+
+- `/rebind_window` command removed (no alias). The reader auto-
+  refreshes the binding on every `UserPromptSubmit` hook fire, so
+  a manual refresh is no longer meaningful. Use `/rebind_topic` to
+  switch a topic to a different tmux session.
+
+- Startup reconcile pass removed from `main.py`. The reader's own
+  `start()` does the initial full read of
+  `~/.ccmux/claude_events.jsonl`.
+
+### Removed
+
+- `/rebind_window` handler, BotCommand entry, and registration.
+- All `set_override` / `clear_override` / `reconcile_instance`
+  call sites across `binding_callbacks.py`, `command_basic.py`,
+  and `main.py`.
+- `runtime.windows` (a `ClaudeInstanceRegistry` singleton) →
+  replaced by `runtime.event_reader` (an `EventLogReader`).
+
+### Migration
+
+1. Upgrade `ccmux-backend` to `>=4.0.0` first; run
+   `ccmux hook --install` so `~/.claude/settings.json` registers
+   the new `UserPromptSubmit` handler.
+2. Restart `ccmux-telegram`. On first start the reader does an
+   initial read of `claude_events.jsonl`. Existing
+   `topic_bindings.json` entries are preserved and continue
+   pointing at the same tmux session names; routing now goes
+   through the reader rather than the deleted registry.
+3. Already-running Claude sessions need to `/clear`, exit, or
+   auto-resume for their next hook event to populate the log.
+
 ## 3.2.0 — 2026-04-27
 
 ### Added
