@@ -13,6 +13,7 @@ from typing import Any
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from .config import config
 from .runtime import event_reader as _event_reader, get_topic
 from .topic_bindings import TopicBinding
 from .util import authorized, get_thread_id
@@ -93,9 +94,7 @@ async def send_history(
             text = f"📋 [{display_name}] No messages yet."
         keyboard = None
     else:
-        from ccmux.config import config as backend_config
-
-        if not backend_config.show_user_messages:
+        if not config.show_user_messages:
             messages = [m for m in messages if m["role"] == "assistant"]
         total = len(messages)
         if total == 0:
