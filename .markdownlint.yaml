@@ -4,3 +4,6 @@ MD024:
 MD033: false
 MD034: false
 MD045: false
+# MD046: code block style — CHANGELOG mixes indented and fenced
+# (older entries indented, newer entries fenced). Don't churn history.
+MD046: false
