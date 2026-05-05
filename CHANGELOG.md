@@ -6,6 +6,58 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 5.0.0 — 2026-05-05
+
+Hard reset of the v4.x line. v4.1.0–v4.1.5 explored a topic-status
+auto-rename feature and downstream coalesce / race fixes that
+turned out to be net-negative for a single-user setup; that branch
+is abandoned. v5.0.0 is the `v4.0.1` baseline plus targeted
+network-resilience patches.
+
+### Removed
+
+- `binding_health` module, tests, and `main.py` wiring. The
+  periodic "✅ Binding to X recovered." auto-reply was unused.
+- The v4.1.0 `topic_rename` feature does not return. Tags
+  `v4.1.0`–`v4.1.5` remain as historical artifacts but do not
+  feed into `main`.
+
+### Changed
+
+- `bot.py`: HTTPXRequest now disables the keep-alive pool
+  (`max_keepalive_connections=0`). Idle TCP conns to
+  `api.telegram.org` are silently closed by the server after ~30s,
+  leaving stale entries that hang to `read_timeout` (5s) on next
+  reuse. Trades ~150ms TLS handshake per send for predictable
+  latency. `get_updates_request` stays default — long-poll holds
+  its conn actively.
+
+- `main.py`: `run_polling(bootstrap_retries=-1)`. Default 5
+  retries gave up too fast on transient connect failures and
+  crashed the bot at startup when the network to Telegram was
+  flaky.
+
+- `_queue_worker.py`: cap each per-topic task at 30s via
+  `asyncio.wait_for`. A hung Telegram API call (AIORateLimiter
+  retry chain on `RetryAfter`, stale conn on read_timeout, etc.)
+  cannot block the per-topic queue indefinitely.
+
+### Why
+
+Two lessons learned from the v4.1.x detour:
+
+- The actual user-visible latency was dominated by stale HTTPX
+  keep-alive connections, not queue backlog. Disabling keep-alive
+  solves it directly, no downstream gymnastics required.
+- v4.0.1 backend's parallel `fast_tick` emits status updates at
+  ~24/sec across all bindings, but PTB's per-chat 1/sec limit
+  meant status edits piled up. v4.1.5's queue coalesce was a
+  band-aid; in single-binding usage the pile-up never actually
+  happens, so the patch is unneeded.
+
+Backend `ccmux` stays at `v4.0.1`; the editable path install in
+`pyproject.toml` makes the `<5.0.0` version pin a soft hint.
+
 ## 4.0.1 — 2026-04-28
 
 ### Added
