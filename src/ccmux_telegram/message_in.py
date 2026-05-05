@@ -156,6 +156,11 @@ async def handle_new_message(instance_id: str, msg: ClaudeMessage, bot: Bot) -> 
         f"text_len={len(msg.text)}"
     )
 
+    # Frontend-side filter: backend always emits user messages; we drop
+    # them here when the user has opted out (CCMUX_SHOW_USER_MESSAGES=false).
+    if msg.role == "user" and not config.show_user_messages:
+        return
+
     # Find the bound topic for this Claude session
     topic = get_topic_for_claude_session(msg.session_id)
 
