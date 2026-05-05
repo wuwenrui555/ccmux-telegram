@@ -8,54 +8,10 @@ This package does **not** provide the `ccmux hook` CLI — install the
 command.
 """
 
-import asyncio
 import logging
 import sys
 
-from .binding_health import BindingHealth, Transition
-
 logger = logging.getLogger(__name__)
-
-
-async def _binding_health_iteration(
-    topics, state_cache, health: BindingHealth, bot
-) -> None:
-    """One pass of the binding-health detector.
-
-    Iterates every binding, observes its current ``is_alive`` value,
-    and posts ``✅ Binding to X recovered`` when the per-binding
-    transition is ``RECOVERED``. ``LOST`` is intentionally not posted
-    here; ``message_out.py`` already warns on the next user send.
-    """
-    for binding in topics.all():
-        name = binding.session_name
-        is_alive_now = state_cache.is_alive(name)
-        t = health.observe(name, is_alive_now)
-        if t is Transition.RECOVERED:
-            try:
-                # Plain text on purpose: avoids MarkdownV2 escaping
-                # gymnastics for session names with `.`, `_`, `-`, etc.
-                await bot.send_message(
-                    chat_id=binding.group_chat_id,
-                    message_thread_id=binding.thread_id,
-                    text=f"✅ Binding to {name} recovered.",
-                )
-            except Exception as e:
-                from .auto_unbind import maybe_unbind
-
-                if not maybe_unbind(e, binding.group_chat_id, binding.thread_id):
-                    logger.exception("Failed to post recovery notice for %s", name)
-
-
-async def _run_binding_health_loop(
-    topics, state_cache, health: BindingHealth, bot, interval: float = 0.5
-) -> None:
-    while True:
-        try:
-            await _binding_health_iteration(topics, state_cache, health, bot)
-        except Exception:
-            logger.exception("binding_health iteration failed")
-        await asyncio.sleep(interval)
 
 
 def main() -> None:
@@ -128,36 +84,14 @@ def main() -> None:
 
     application = create_bot(backend=backend)
 
-    # Schedule the per-binding health loop on the same event loop the
-    # bot runs on. Chain onto the existing post_init/post_shutdown that
-    # create_bot installed — overwriting them would break menu setup,
-    # rate-limiter prefill, etc.
-    binding_health = BindingHealth()
-    from .state_cache import get_state_cache
-
-    state_cache = get_state_cache()
-
-    _existing_post_init = application.post_init
-    _existing_post_shutdown = application.post_shutdown
-
-    async def _post_init(app) -> None:
-        if _existing_post_init is not None:
-            await _existing_post_init(app)
-        app.bot_data["_binding_health_task"] = asyncio.create_task(
-            _run_binding_health_loop(topics, state_cache, binding_health, app.bot)
-        )
-
-    async def _post_shutdown(app) -> None:
-        task = app.bot_data.get("_binding_health_task")
-        if task is not None:
-            task.cancel()
-        if _existing_post_shutdown is not None:
-            await _existing_post_shutdown(app)
-
-    application.post_init = _post_init
-    application.post_shutdown = _post_shutdown
-
-    application.run_polling(allowed_updates=["message", "callback_query"])
+    application.run_polling(
+        allowed_updates=["message", "callback_query"],
+        # Network can be flaky (IPv6 link drops, telegram transient 5xx,
+        # etc.). Default 5 retries gives up quickly and exits the bot.
+        # Retry indefinitely so a transient outage doesn't kill the
+        # bot — once connectivity returns, polling resumes.
+        bootstrap_retries=-1,
+    )
 
 
 if __name__ == "__main__":

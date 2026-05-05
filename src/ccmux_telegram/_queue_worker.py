@@ -164,6 +164,12 @@ async def _message_queue_worker(bot: Bot, user_id: int, thread_id: int) -> None:
                             thread_id,
                         )
 
+                # Cap any single task at 30s so a stuck Telegram API call
+                # (AIORateLimiter retry chain on RetryAfter, hung pooled
+                # connection, etc.) cannot block the per-topic worker
+                # indefinitely. We've observed 4+ minute hangs that
+                # silently froze the entire topic's outbound queue.
+                # Drop the task, log, and move on.
                 if task.task_type == "content":
                     # Try to merge consecutive content tasks
                     merged_task, merge_count = await _merge_content_tasks(
@@ -179,12 +185,21 @@ async def _message_queue_worker(bot: Bot, user_id: int, thread_id: int) -> None:
                         # Mark merged tasks as done
                         for _ in range(merge_count):
                             queue.task_done()
-                    await _process_content_task(bot, user_id, merged_task)
+                    await asyncio.wait_for(
+                        _process_content_task(bot, user_id, merged_task),
+                        timeout=30.0,
+                    )
                 elif task.task_type == "status_update":
-                    await _process_status_update_task(bot, user_id, task)
+                    await asyncio.wait_for(
+                        _process_status_update_task(bot, user_id, task),
+                        timeout=30.0,
+                    )
                 elif task.task_type == "status_clear":
-                    await _do_clear_status_message(
-                        bot, user_id, task.thread_id or 0, chat_id=task.chat_id
+                    await asyncio.wait_for(
+                        _do_clear_status_message(
+                            bot, user_id, task.thread_id or 0, chat_id=task.chat_id
+                        ),
+                        timeout=30.0,
                     )
             except RetryAfter as e:
                 retry_secs = (

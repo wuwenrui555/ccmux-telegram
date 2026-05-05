@@ -15,6 +15,7 @@ Delegates all real work to sub-modules:
 import logging
 from collections.abc import Awaitable, Callable
 
+import httpx
 from telegram import BotCommand, Update
 from telegram.ext import (
     AIORateLimiter,
@@ -25,6 +26,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from .config import config
 from .runtime import event_reader as _event_reader
@@ -259,6 +261,27 @@ def create_bot(backend: DefaultBackend | None = None) -> Application:
     application = (
         Application.builder()
         .token(config.telegram_bot_token)
+        # Disable HTTPX keep-alive pool for outbound (send/edit) requests:
+        # idle keep-alive conns to api.telegram.org get silently closed
+        # by Telegram (server-side idle close, applies on IPv4 too) after
+        # ~30s, leaving stale entries in the pool. Next reuse hangs to
+        # read_timeout (5s) and AIORateLimiter retries on top, total can
+        # exceed 30s for a single send. Trade ~150ms TLS handshake per
+        # send for predictable latency. Safe to disable here because
+        # main.py passes bootstrap_retries=-1 so transient bootstrap
+        # connect failures retry indefinitely instead of crashing the bot.
+        # get_updates_request stays default — long-poll holds its conn
+        # actively, doesn't go stale the same way.
+        .request(
+            HTTPXRequest(
+                httpx_kwargs={
+                    "limits": httpx.Limits(
+                        max_connections=256,
+                        max_keepalive_connections=0,
+                    )
+                },
+            )
+        )
         .rate_limiter(AIORateLimiter(max_retries=5))
         .post_init(post_init)
         .post_shutdown(post_shutdown)
