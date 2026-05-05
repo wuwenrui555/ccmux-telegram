@@ -6,6 +6,35 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 5.1.0 — 2026-05-05
+
+### Added
+
+- `CCMUX_SHOW_USER_MESSAGES` env var (default `true`). When false,
+  `handle_new_message` drops `role==user` messages so they are not
+  echoed to Telegram. Replaces the same-named backend toggle that
+  was removed in `ccmux` v5.0.0.
+
+### Changed
+
+- Env loader now reads two files by purpose:
+  - `~/.ccmux/.env` for secrets (`TELEGRAM_BOT_TOKEN`, `ALLOWED_USERS`,
+    `OPENAI_API_KEY`, `OPENAI_BASE_URL`)
+  - `~/.ccmux/settings.env` for operational settings (all `CCMUX_*`)
+
+  cwd-local files (`./.env`, `./settings.env`) shadow the global
+  ones within each kind. Migration command for existing deployments:
+
+  ```bash
+  grep '^CCMUX_' ~/.ccmux/.env > ~/.ccmux/settings.env
+  sed -i '/^CCMUX_/d' ~/.ccmux/.env
+  ```
+
+- Backend dependency pin: `ccmux>=4.0.0,<5.0.0` →
+  `ccmux>=5.0.0,<6.0.0`.
+- `command_history.py` now reads `show_user_messages` from frontend
+  config (the backend field is gone in `ccmux` v5.0.0).
+
 ## 5.0.0 — 2026-05-05
 
 Hard reset of the v4.x line. v4.1.0–v4.1.5 explored a topic-status

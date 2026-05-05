@@ -1,12 +1,12 @@
 [project]
 name = "ccmux-telegram"
-version = "5.0.0"
+version = "5.1.0"
 description = "Telegram bot frontend for the ccmux Claude-tmux backend"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
 dependencies = [
-    "ccmux>=4.0.0,<5.0.0",
+    "ccmux>=5.0.0,<6.0.0",
     "python-telegram-bot[rate-limiter]>=21.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.27.0",
