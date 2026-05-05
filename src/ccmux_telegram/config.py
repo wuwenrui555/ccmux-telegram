@@ -5,7 +5,10 @@ specific settings. Backend concerns (tmux session name, Claude paths,
 JSONL monitor interval) live in `ccmux.config.config`, imported where
 needed — never duplicated here.
 
-.env loading priority: local `.env` (cwd) > `$CCMUX_DIR/.env`.
+Loads `settings.env` (operational toggles) and `.env` (secrets) as
+two separate files. Within each kind: cwd > `$CCMUX_DIR/`. The two
+kinds are loaded in order settings.env → .env so secrets and
+settings cannot accidentally cross-contaminate environment lookup.
 """
 
 import logging
@@ -28,14 +31,25 @@ class Config:
         self.config_dir = ccmux_dir()
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
+        # Settings (non-sensitive) — cwd then global
+        local_settings = Path("settings.env")
+        global_settings = self.config_dir / "settings.env"
+        if local_settings.is_file():
+            load_dotenv(local_settings)
+            logger.debug("Loaded settings from %s", local_settings.resolve())
+        if global_settings.is_file():
+            load_dotenv(global_settings)
+            logger.debug("Loaded settings from %s", global_settings)
+
+        # Secrets — cwd then global
         local_env = Path(".env")
         global_env = self.config_dir / ".env"
         if local_env.is_file():
             load_dotenv(local_env)
-            logger.debug("Loaded env from %s", local_env.resolve())
+            logger.debug("Loaded secrets from %s", local_env.resolve())
         if global_env.is_file():
             load_dotenv(global_env)
-            logger.debug("Loaded env from %s", global_env)
+            logger.debug("Loaded secrets from %s", global_env)
 
         self.telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN") or ""
         if not self.telegram_bot_token:
@@ -69,6 +83,13 @@ class Config:
         self.show_thinking = os.getenv("CCMUX_SHOW_THINKING", "true").lower() != "false"
         self.show_skill_bodies = (
             os.getenv("CCMUX_SHOW_SKILL_BODIES", "").lower() == "true"
+        )
+        # Whether user-typed messages emitted by the backend should be
+        # rendered to Telegram (echoed with 👤 prefix). Default true:
+        # the user types in CC, the bot relays the prompt to Telegram so
+        # mobile-side users see what was sent. Set false to suppress.
+        self.show_user_messages = (
+            os.getenv("CCMUX_SHOW_USER_MESSAGES", "true").lower() != "false"
         )
         # Tools whose tool_use/tool_result are forwarded even when
         # CCMUX_SHOW_TOOL_CALLS=false. Defaults to "Skill" so a skill
