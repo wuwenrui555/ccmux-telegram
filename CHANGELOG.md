@@ -6,6 +6,33 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 5.3.0 — 2026-05-07
+
+### Changed
+
+- AskUserQuestion / ExitPlanMode interactive button messages now
+  persist until the matching `tool_result` arrives, instead of being
+  cleared on every transient `Idle` observation. CC's "Chat about
+  this" item opens a side chat with claude that briefly puts the pane
+  back into the input-chrome (Idle) state without actually answering
+  the prompt; the previous behaviour deleted the button on that
+  transient Idle and re-sent a new one when the AUQ regained focus,
+  causing a visible disappear-then-reappear flicker. The button is
+  now keyed by the JSONL `tool_use_id` and only retired when its
+  matching `tool_result` is observed.
+- Side benefit: closes the "late-click" footgun called out in v5.2.0
+  notes — a button kept alive after the prompt was answered would
+  have routed stray keystrokes to an idle chat input. Now the button
+  disappears as soon as the AUQ is genuinely resolved.
+
+### Added
+
+- `prompt_state.set_pending_prompt_tool_use` /
+  `get_pending_prompt_tool_use` / `clear_pending_prompt_tool_use`
+  helpers, plus a private `_pending_prompt_tool_uses` dict keyed by
+  `(user_id, thread_id_or_0)`. `pop_interactive_state` now also
+  clears the pending entry so binding-lifecycle teardown stays atomic.
+
 ## 5.2.2 — 2026-05-07
 
 ### Changed

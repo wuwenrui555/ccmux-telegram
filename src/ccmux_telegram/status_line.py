@@ -22,7 +22,7 @@ from telegram import Bot
 from ccmux.api import Blocked, ClaudeState, Dead, Idle, Working
 
 from .message_queue import enqueue_status_update
-from .prompt_state import get_interactive_window
+from .prompt_state import get_interactive_window, get_pending_prompt_tool_use
 from .state_cache import get_state_cache
 
 logger = logging.getLogger(__name__)
@@ -109,8 +109,18 @@ async def _dispatch(
             )
 
         case Idle():
-            # Clear any dangling interactive message bound to this instance.
-            if get_interactive_window(user_id, thread_id) == window_id:
+            # Clear any dangling interactive message bound to this instance,
+            # unless an AUQ / ExitPlanMode tool_use is still pending. CC's
+            # "Chat about this" item opens a side-chat that briefly puts
+            # the pane back into Idle (full input chrome rendered) without
+            # actually answering the prompt; deleting the button on that
+            # transient Idle would leave the user with no way to answer
+            # the still-open AUQ. The matching tool_result clears the
+            # pending tool_use_id and is what truly closes the prompt.
+            if (
+                get_interactive_window(user_id, thread_id) == window_id
+                and get_pending_prompt_tool_use(user_id, thread_id) is None
+            ):
                 await clear_interactive_msg(user_id, bot, thread_id, chat_id=chat_id)
             # Flush any user messages buffered while this instance was
             # Working / Blocked. The buffer is per-window and FIFO.

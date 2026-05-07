@@ -19,11 +19,14 @@ import re
 from .config import config
 from .runtime import get_topic_for_claude_session
 from ccmux.api import ClaudeMessage
-from .prompt import handle_interactive_ui
+from .prompt import clear_interactive_msg, handle_interactive_ui
 from .prompt_state import (
     PROMPT_TOOL_NAMES,
     clear_interactive_mode,
+    clear_pending_prompt_tool_use,
+    get_pending_prompt_tool_use,
     set_interactive_mode,
+    set_pending_prompt_tool_use,
 )
 from .markdown import convert_markdown_tables
 from .sender import split_message
@@ -191,8 +194,25 @@ async def handle_new_message(instance_id: str, msg: ClaudeMessage, bot: Bot) -> 
             tool_use_args=msg.input,
         )
         if handled:
+            # Pair the rendered button with this tool_use_id. Until the
+            # matching tool_result arrives, transient Idle pane states
+            # (e.g. CC's "Chat about this" side chat) must NOT delete
+            # the button; status_line.on_state respects this.
+            if msg.tool_use_id:
+                set_pending_prompt_tool_use(user_id, thread_id, msg.tool_use_id)
             return
         clear_interactive_mode(user_id, thread_id)
+
+    # The matching tool_result resolves a tracked prompt-tool call: drop
+    # the pending tool_use_id and delete the Telegram button now that the
+    # AUQ / ExitPlanMode is truly answered.
+    if msg.content_type == "tool_result" and msg.tool_use_id:
+        pending = get_pending_prompt_tool_use(user_id, thread_id)
+        if pending and pending == msg.tool_use_id:
+            clear_pending_prompt_tool_use(user_id, thread_id)
+            await clear_interactive_msg(
+                user_id, bot, thread_id, chat_id=topic.group_chat_id
+            )
 
     # State_monitor owns the interactive msg lifecycle in v2.x: its
     # Idle dispatch (status_line.on_state) calls clear_interactive_msg
