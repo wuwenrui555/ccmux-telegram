@@ -36,6 +36,7 @@ from .callback_data import (
 )
 from .sender import NO_LINK_PREVIEW, PARSE_MODE
 from .prompt_state import (
+    PROMPT_TOOL_NAMES,
     get_interactive_msg_id,
     pop_interactive_state,
     set_interactive_mode,
@@ -110,6 +111,57 @@ def _format_blocked_content(text: str) -> str:
 
         styled.append(line)
     return "\n".join(styled)
+
+
+def _render_from_tool_args(tool_name: str, args: dict) -> tuple[str, str] | None:
+    """Render a prompt UI directly from a JSONL `tool_use.input` dict.
+
+    Used as the fallback when `extract_interactive_content` cannot pull
+    a UI from the captured pane (scroll race / fast TUI answer / pane
+    flicker). The output `(ui_name, text)` tuple matches what the
+    pane-capture path produces for the same prompt, so the downstream
+    `_format_blocked_content` / `_render_mdv2` / keyboard build code
+    sees an identical shape regardless of source.
+
+    Returns None for any tool other than `AskUserQuestion` /
+    `ExitPlanMode` so this stays a pure helper with no side effects.
+    """
+    if tool_name == "AskUserQuestion":
+        questions = args.get("questions")
+        if not isinstance(questions, list) or not questions:
+            return None
+        sections: list[str] = []
+        for q in questions:
+            if not isinstance(q, dict):
+                continue
+            question_text = q.get("question", "")
+            options = q.get("options", [])
+            lines: list[str] = []
+            if question_text:
+                lines.append(question_text)
+            if isinstance(options, list):
+                for i, opt in enumerate(options, start=1):
+                    if not isinstance(opt, dict):
+                        continue
+                    label = opt.get("label", "")
+                    description = opt.get("description", "")
+                    if description:
+                        lines.append(f"  {i}. {label} — {description}")
+                    elif label:
+                        lines.append(f"  {i}. {label}")
+            if lines:
+                sections.append("\n".join(lines))
+        if not sections:
+            return None
+        return "ask_user_question", "\n\n".join(sections)
+
+    if tool_name == "ExitPlanMode":
+        plan = args.get("plan")
+        if not isinstance(plan, str) or not plan:
+            return None
+        return "exit_plan_mode", plan
+
+    return None
 
 
 # MarkdownV2 escaping — Telegram requires these characters to be
@@ -241,44 +293,66 @@ async def handle_interactive_ui(
     *,
     ui: "BlockedUI | None" = None,
     content: str | None = None,
+    tool_name: str | None = None,
+    tool_use_args: dict | None = None,
 ) -> bool:
     """Render a blocking UI to Telegram.
 
     If `ui` + `content` are provided (e.g. by the `on_state` consumer),
-    they are used directly. Otherwise the function falls back to
-    capturing the pane itself via the tmux_registry (legacy callers,
-    primarily the refresh callback).
+    they are used directly. Otherwise the function tries pane capture
+    first (the primary path), and on failure falls back to rendering
+    `AskUserQuestion` / `ExitPlanMode` prompts from the JSONL
+    `tool_use_args` dict (covers tmux scroll race, fast TUI answers,
+    transient pane flicker). Returns False only if neither path
+    produces a UI.
     """
     if chat_id is None:
         return False
 
     # Fast path: caller already has the parsed UI.
     if ui is not None and content is not None:
-        ui_name = ui.value
-        text = content
+        ui_name: str | None = ui.value
+        text: str | None = content
     else:
-        # Legacy path: capture pane and extract. Kept for callback
-        # refresh handlers that do not carry a ClaudeState.
+        ui_name = None
+        text = None
+        # Primary path: capture pane and extract.
         tm = tmux_registry.get_by_window_id(window_id)
-        if not tm:
+        if tm:
+            w = await tm.find_window_by_id(window_id)
+            if w:
+                pane_text = await tm.capture_pane(w.window_id)
+                if pane_text:
+                    extracted = extract_interactive_content(pane_text)
+                    if extracted:
+                        ui_name = extracted.ui.value
+                        text = extracted.content
+                    else:
+                        logger.debug(
+                            "No interactive UI detected in window_id %s "
+                            "(last 3 lines: %s)",
+                            window_id,
+                            pane_text.strip().split("\n")[-3:],
+                        )
+                else:
+                    logger.debug("No pane text captured for window_id %s", window_id)
+
+        # Fallback: render directly from JSONL tool_use args. Only fires
+        # when pane capture produced nothing AND the caller passed args
+        # for one of the prompt-only tools.
+        if ui_name is None and tool_name in PROMPT_TOOL_NAMES and tool_use_args:
+            rendered = _render_from_tool_args(tool_name, tool_use_args)
+            if rendered is not None:
+                ui_name, text = rendered
+                logger.info(
+                    "handle_interactive_ui: pane capture empty for window_id %s, "
+                    "rendered %s from tool_use args",
+                    window_id,
+                    tool_name,
+                )
+
+        if ui_name is None or text is None:
             return False
-        w = await tm.find_window_by_id(window_id)
-        if not w:
-            return False
-        pane_text = await tm.capture_pane(w.window_id)
-        if not pane_text:
-            logger.debug("No pane text captured for window_id %s", window_id)
-            return False
-        extracted = extract_interactive_content(pane_text)
-        if not extracted:
-            logger.debug(
-                "No interactive UI detected in window_id %s (last 3 lines: %s)",
-                window_id,
-                pane_text.strip().split("\n")[-3:],
-            )
-            return False
-        ui_name = extracted.ui.value
-        text = extracted.content
 
     # Build message with navigation keyboard.
     keyboard = _build_interactive_keyboard(window_id, ui_name=ui_name)

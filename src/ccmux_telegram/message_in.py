@@ -182,7 +182,13 @@ async def handle_new_message(instance_id: str, msg: ClaudeMessage, bot: Bot) -> 
 
         await asyncio.sleep(0.3)
         handled = await handle_interactive_ui(
-            bot, user_id, wid, thread_id, chat_id=topic.group_chat_id
+            bot,
+            user_id,
+            wid,
+            thread_id,
+            chat_id=topic.group_chat_id,
+            tool_name=msg.tool_name,
+            tool_use_args=msg.input,
         )
         if handled:
             return
