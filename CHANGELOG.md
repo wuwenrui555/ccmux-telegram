@@ -6,6 +6,26 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 5.2.0 — 2026-05-07
+
+### Changed
+
+- `handle_interactive_ui` now falls back to rendering AskUserQuestion /
+  ExitPlanMode prompts directly from the JSONL `tool_use` input args
+  when pane capture cannot extract a UI (covers tmux scroll race,
+  fast TUI answers, transient pane flicker). Pane capture remains the
+  primary path; the fallback only fires when the pane produces nothing
+  and the caller passes `tool_name` + `tool_use_args` for a prompt
+  tool.
+- Bumped the `ccmux` floor to `>=5.1.1`. The new
+  `ClaudeMessage.input` field is required by the fallback path.
+
+### Added
+
+- `_render_from_tool_args(tool_name, args)` helper in `prompt.py`.
+  Pure function: returns `(ui_name, text)` for AskUserQuestion /
+  ExitPlanMode args, `None` for any other tool.
+
 ## 5.1.0 — 2026-05-05
 
 ### Added

@@ -9,6 +9,7 @@ from telegram.error import BadRequest
 from ccmux_telegram.prompt import (
     _build_interactive_keyboard,
     _format_blocked_content,
+    _render_from_tool_args,
     _render_mdv2,
     handle_interactive_ui,
 )
@@ -159,6 +160,200 @@ class TestHandleInteractiveUI:
 
         assert result is False
         mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.usefixtures("_clear_interactive_state")
+class TestHandleInteractiveUIArgsFallback:
+    """Pane-capture-empty + tool_use args = render via fallback.
+
+    Validates that when `extract_interactive_content` fails (covers the
+    tmux scroll race / fast TUI answer / pane flicker), the prompt is
+    still delivered to Telegram by rendering directly from the JSONL
+    `tool_use_args` payload.
+    """
+
+    @pytest.mark.asyncio
+    async def test_args_fallback_rendered_when_pane_empty(self, mock_bot: AsyncMock):
+        window_id = "@5"
+        mock_window = MagicMock()
+        mock_window.window_id = window_id
+
+        # Pane text that doesn't match any UI pattern → extract returns None.
+        with (
+            patch("ccmux_telegram.prompt.tmux_registry") as mock_registry,
+            patch(
+                "ccmux_telegram.prompt.extract_interactive_content",
+                return_value=None,
+            ),
+        ):
+            mock_tm = MagicMock()
+            mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
+            mock_tm.capture_pane = AsyncMock(return_value="(non-matching pane)\n")
+            mock_registry.get_by_window_id.return_value = mock_tm
+
+            auq_args = {
+                "questions": [
+                    {
+                        "question": "Pick a path",
+                        "options": [
+                            {"label": "Yes", "description": "proceed"},
+                            {"label": "No", "description": "cancel"},
+                        ],
+                    }
+                ]
+            }
+            result = await handle_interactive_ui(
+                mock_bot,
+                user_id=1,
+                window_id=window_id,
+                thread_id=42,
+                chat_id=100,
+                tool_name="AskUserQuestion",
+                tool_use_args=auq_args,
+            )
+
+        assert result is True
+        mock_bot.send_message.assert_called_once()
+        sent_text = mock_bot.send_message.call_args.kwargs["text"]
+        # The question survives the MDV2 rendering pipeline.
+        assert "Pick a path" in sent_text
+        # And so do the option labels.
+        assert "Yes" in sent_text
+        assert "No" in sent_text
+
+    @pytest.mark.asyncio
+    async def test_args_fallback_skipped_for_non_prompt_tool(self, mock_bot: AsyncMock):
+        """A non-prompt `tool_name` must not trigger the fallback path
+        even if the caller passes args (defensive: backend already
+        whitelists prompt tools, this is the second guard).
+        """
+        window_id = "@5"
+        mock_window = MagicMock()
+        mock_window.window_id = window_id
+
+        with (
+            patch("ccmux_telegram.prompt.tmux_registry") as mock_registry,
+            patch(
+                "ccmux_telegram.prompt.extract_interactive_content",
+                return_value=None,
+            ),
+        ):
+            mock_tm = MagicMock()
+            mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
+            mock_tm.capture_pane = AsyncMock(return_value="(non-matching pane)\n")
+            mock_registry.get_by_window_id.return_value = mock_tm
+
+            result = await handle_interactive_ui(
+                mock_bot,
+                user_id=1,
+                window_id=window_id,
+                thread_id=42,
+                chat_id=100,
+                tool_name="Edit",
+                tool_use_args={"file_path": "x.py"},
+            )
+
+        assert result is False
+        mock_bot.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_args_missing(self, mock_bot: AsyncMock):
+        """Pane fails AND no args → return False. The default path for
+        callers that don't have a JSONL message (e.g. refresh callback).
+        """
+        window_id = "@5"
+        mock_window = MagicMock()
+        mock_window.window_id = window_id
+
+        with (
+            patch("ccmux_telegram.prompt.tmux_registry") as mock_registry,
+            patch(
+                "ccmux_telegram.prompt.extract_interactive_content",
+                return_value=None,
+            ),
+        ):
+            mock_tm = MagicMock()
+            mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
+            mock_tm.capture_pane = AsyncMock(return_value="(non-matching pane)\n")
+            mock_registry.get_by_window_id.return_value = mock_tm
+
+            result = await handle_interactive_ui(
+                mock_bot,
+                user_id=1,
+                window_id=window_id,
+                thread_id=42,
+                chat_id=100,
+                # tool_name + tool_use_args omitted (None)
+            )
+
+        assert result is False
+        mock_bot.send_message.assert_not_called()
+
+
+class TestRenderFromToolArgs:
+    """Pure-function tests for `_render_from_tool_args`."""
+
+    def test_ask_user_question_basic(self):
+        args = {
+            "questions": [
+                {
+                    "question": "Continue?",
+                    "options": [
+                        {"label": "Yes", "description": "proceed"},
+                        {"label": "No", "description": "cancel"},
+                    ],
+                }
+            ]
+        }
+        result = _render_from_tool_args("AskUserQuestion", args)
+        assert result is not None
+        ui_name, text = result
+        assert ui_name == "ask_user_question"
+        assert "Continue?" in text
+        assert "1. Yes" in text
+        assert "2. No" in text
+        assert "proceed" in text
+        assert "cancel" in text
+
+    def test_ask_user_question_options_without_description(self):
+        args = {
+            "questions": [
+                {
+                    "question": "Pick",
+                    "options": [{"label": "A"}, {"label": "B"}],
+                }
+            ]
+        }
+        result = _render_from_tool_args("AskUserQuestion", args)
+        assert result is not None
+        _ui_name, text = result
+        assert "1. A" in text
+        assert "2. B" in text
+        # No em-dash separator when description is empty.
+        assert " — " not in text
+
+    def test_ask_user_question_missing_questions_returns_none(self):
+        assert _render_from_tool_args("AskUserQuestion", {}) is None
+        assert _render_from_tool_args("AskUserQuestion", {"questions": []}) is None
+
+    def test_exit_plan_mode_basic(self):
+        args = {"plan": "Step 1: do X\nStep 2: do Y"}
+        result = _render_from_tool_args("ExitPlanMode", args)
+        assert result is not None
+        ui_name, text = result
+        assert ui_name == "exit_plan_mode"
+        assert text == "Step 1: do X\nStep 2: do Y"
+
+    def test_exit_plan_mode_missing_plan_returns_none(self):
+        assert _render_from_tool_args("ExitPlanMode", {}) is None
+        assert _render_from_tool_args("ExitPlanMode", {"plan": ""}) is None
+
+    @pytest.mark.parametrize("tool_name", ["Read", "Bash", "Edit", "Write"])
+    def test_non_prompt_tools_return_none(self, tool_name: str):
+        # Even when args look plausible the helper must refuse — only
+        # prompt tools are supported.
+        assert _render_from_tool_args(tool_name, {"plan": "x"}) is None
+        assert _render_from_tool_args(tool_name, {"questions": [{}]}) is None
 
 
 class TestFormatBlockedContent:
