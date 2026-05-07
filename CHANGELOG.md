@@ -6,6 +6,20 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 5.2.2 — 2026-05-07
+
+### Changed
+
+- Reverted the v5.2.1 dep-style switch: `ccmux` is back to the editable
+  path source via `[tool.uv.sources]` rather than a git+tag reference.
+  Reason: this repository is co-developed with `ccmux-backend` on the
+  same machine and active backend iteration is the dominant workflow;
+  the git+tag pin slowed the dev loop without buying real production
+  isolation, since the bot runs from this same checkout.
+- Removed `[tool.hatch.metadata] allow-direct-references` (no longer
+  needed once `ccmux` reverts to a version-only constraint and there
+  are no remaining direct references in `[project].dependencies`).
+
 ## 5.2.1 — 2026-05-07
 
 ### Changed
