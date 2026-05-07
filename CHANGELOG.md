@@ -6,6 +6,19 @@ depends on backend 1.x.
 
 ## [Unreleased]
 
+## 5.2.1 — 2026-05-07
+
+### Changed
+
+- Switched the `ccmux` dependency declaration from a local editable
+  path source (`[tool.uv.sources] ccmux = { path = "../ccmux-backend",
+  editable = true }`) to a direct git+tag reference
+  (`ccmux @ git+https://github.com/wuwenrui555/ccmux-backend.git@v5.1.1`)
+  in `[project].dependencies`, matching the existing `claude-code-state`
+  setup. Pure dev-flow change with no runtime behaviour change. Backend
+  upgrades now require bumping the tag in `pyproject.toml` rather than
+  picking up the working tree on disk.
+
 ## 5.2.0 — 2026-05-07
 
 ### Changed
